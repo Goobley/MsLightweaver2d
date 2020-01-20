@@ -14,6 +14,7 @@ from copy import deepcopy
 from MsLightweaverAtoms import H_6, CaII, He_9
 import os.path as path
 import time
+from notify_run import Notify
 
 class MsLightweaverManager:
 
@@ -59,6 +60,19 @@ class MsLightweaverManager:
                 print('Stat eq converged in %d iterations' % (i+1))
                 break
 
+    def update_height(self):
+        height = self.atmos.height
+        cmass = self.atmos.cmass
+        rhoSI = self.atmost['d1'][self.idx]
+        height[0] = 0.0
+        for k in range(1, cmass.shape[0]):
+            height[k] = height[k-1] - 2.0 * (cmass[k] - cmass[k-1]) / (rhoSI[k-1] + rhoSI[k])
+
+        # NOTE(cmo): ish.
+        # NOTE(cmo): What I mean by ish, is this assumes that tau500 doesn't change, which it clearly does, but we never refer to tau500 in the computation or save it, so it currently doesn't matter.
+        hTau1 = np.interp(1.0, self.atmos.tau_ref, height)
+        height -= hTau1
+
     def increment_step(self):
         self.idx += 1
         self.atmos.temperature[:] = self.atmost['tg1'][self.idx]
@@ -68,6 +82,8 @@ class MsLightweaverManager:
         self.atmos.bHeat[:] = self.atmost['bheat1'][self.idx]
 
         # self.atmos.convert_scales()
+        # NOTE(cmo): Convert scales is slow due to recomputing the tau500 opacity (pure python EOS), we only really need the height at the moment. So let's just do that quickly here.
+        self.update_height()
         self.ctx.update_deps()
 
     def time_dep_step(self, nSubSteps=100, popsTol=1e-3, JTol=3e-3):
@@ -91,20 +107,45 @@ if path.isfile('StartingContext.pickle'):
 else:
     startingCtx = None
 
+def convert_atomic_pops(atom):
+    d = {}
+    if atom.pops is not None:
+        d['n'] = atom.pops
+    else:
+        d['n'] = atom.pops
+    d['nStar'] = atom.nStar
+    return d
+
+def distill_pops(eqPops):
+    d = {}
+    for atom in eqPops.atomicPops:
+        d[atom.name] = convert_atomic_pops(atom)
+    return d
+
 start = time.time()
 ms = MsLightweaverManager(atmost, startingCtx=startingCtx)
 
 eqPops : List[SpeciesStateTable] = []
+Iwave : List[np.ndarray] = []
 ms.initial_stat_eq()
-eqPops.append(deepcopy(eqPops))
-for i in range(ms.atmost['time'].shape[0] - 1):
+eqPops.append(deepcopy(ms.eqPops))
+Iwave.append(deepcopy(ms.ctx.spect.I))
+# for i in range(ms.atmost['time'].shape[0] - 1):
+for i in range(80):
     stepStart = time.time()
-    ms.increment_step()
+    if i != 0:
+        ms.increment_step()
     ms.time_dep_step(popsTol=1e-2, JTol=2e-2)
-    eqPops.append(deepcopy(ms.eqPops))
+    eqPops.append(distill_pops(deepcopy(ms.eqPops)))
+    Iwave.append(deepcopy(ms.ctx.spect.I))
     stepEnd = time.time()
     print('-------')
-    print('Timestep %d done (%f)' % ((i+1), ms.atmost['time'][i+1]))
-    print('Time taken for step %.2e' % (stepEnd - stepStart))
+    print('Timestep %d done (%f s)' % ((i+1), ms.atmost['time'][i+1]))
+    print('Time taken for step %.2e s' % (stepEnd - stepStart))
+    print('-------')
 end = time.time()
 print('Total time taken %.4e' % (end - start))
+
+notify = Notify()
+notify.read_config()
+notify.send('MsLightweaver done!')
