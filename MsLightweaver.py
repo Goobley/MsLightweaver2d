@@ -130,8 +130,7 @@ Iwave : List[np.ndarray] = []
 ms.initial_stat_eq()
 eqPops.append(deepcopy(ms.eqPops))
 Iwave.append(deepcopy(ms.ctx.spect.I))
-# for i in range(ms.atmost['time'].shape[0] - 1):
-for i in range(80):
+for i in range(ms.atmost['time'].shape[0] - 1):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
