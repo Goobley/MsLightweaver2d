@@ -5,11 +5,11 @@ def compute_cmass(atmost: Atmost) -> np.ndarray:
     cmass = np.zeros_like(atmost.z1)
     cmass[:, 0] = 1e-9
     for i in range(1, cmass.shape[1]):
-        cmass[:, i] = cmass[:, i-1] + 0.25 * np.abs(atmost.z1[:, i-1] - atmost.z1[:, i]) * (atmost.d1[:, i] + atmost.d1[:, i-1])
+        cmass[:, i] = cmass[:, i-1] + 0.5 * np.abs(atmost.z1[:, i-1] - atmost.z1[:, i]) * (atmost.d1[:, i] + atmost.d1[:, i-1])
 
     return cmass
 
-def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.ndarray, interp_fn=np.interp) -> Atmost:
+def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.ndarray) -> Atmost:
     z1 = np.zeros_like(atmost.z1)
     d1 = np.zeros_like(atmost.d1)
     ne1 = np.zeros_like(atmost.ne1)
