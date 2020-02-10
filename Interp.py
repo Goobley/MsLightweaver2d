@@ -5,7 +5,7 @@ def compute_cmass(atmost: Atmost) -> np.ndarray:
     cmass = np.zeros_like(atmost.z1)
     cmass[:, 0] = 1e-9
     for i in range(1, cmass.shape[1]):
-        cmass[:, i] = cmass[:, i-1] + 0.25 * np.abs(atmost.z1[:, i-1] - atmost.z1[:, i]) * (atmost.d1[:, i] + atmost.d1[:, i-1])
+        cmass[:, i] = cmass[:, i-1] + 0.5 * np.abs(atmost.z1[:, i-1] - atmost.z1[:, i]) * (atmost.d1[:, i] + atmost.d1[:, i-1])
 
     return cmass
 
