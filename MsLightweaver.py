@@ -12,9 +12,12 @@ import lightweaver.constants as Const
 from typing import List
 from copy import deepcopy
 from MsLightweaverAtoms import H_6, CaII, He_9
+import os
 import os.path as path
 import time
 from notify_run import Notify
+
+OutputDir = 'TimestepsRadynAtomsCrossBurgessVdwCdi_NoBurgess/'
 
 class MsLightweaverManager:
 
@@ -29,7 +32,7 @@ class MsLightweaverManager:
             args = startingCtx.arguments
             self.atmos = args['atmos']
             self.spect = args['spect']
-            self.aSet = self.spect.activeSet
+            self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
         else:
             self.atmos = Atmosphere(scale=ScaleType.ColumnMass, depthScale=atmost['cmassGrid'], temperature=atmost['tg1'][0], vlos=atmost['vz1'][0], vturb=atmost['vturb'], ne=atmost['ne1'][0], nHTot=self.nHTot[0])
@@ -37,7 +40,7 @@ class MsLightweaverManager:
             self.atmos.quadrature(5)
 
             self.aSet = RadiativeSet([H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), MgII_atom(), N_atom(), Na_atom(), S_atom()])
-            self.aSet.set_active('H', 'He', 'Ca')
+            self.aSet.set_active('H', 'Ca')
 
             self.spect = self.aSet.compute_wavelength_grid()
 
@@ -97,12 +100,18 @@ class MsLightweaverManager:
             if delta < popsTol and dJ < JTol:
                 break
 
+filesInOutDir = [f for f in os.listdir(OutputDir) if f.startswith('Step_')]
+if len(filesInOutDir) > 0:
+    print('Timesteps already present in output directory (%s), proceed? [Y/n]' % OutputDir)
+    inp = input()
+    if len(inp) > 0 and inp[0].lower() == 'n':
+        raise ValueError('Data in output directory')
 
 with open('RadynData.pickle', 'rb') as pkl:
     atmost = pickle.load(pkl)
 
-if path.isfile('StartingContext.pickle'):
-    with open('StartingContext.pickle', 'rb') as pkl:
+if path.isfile(OutputDir + 'StartingContext.pickle'):
+    with open(OutputDir + 'StartingContext.pickle', 'rb') as pkl:
         startingCtx = pickle.load(pkl)
 else:
     startingCtx = None
@@ -122,21 +131,28 @@ def distill_pops(eqPops):
         d[atom.name] = convert_atomic_pops(atom)
     return d
 
+def save_timestep(i):
+    with open(OutputDir + 'Step_%.6d.pickle' % i, 'wb') as pkl:
+        eqPops = distill_pops(ms.eqPops)
+        Iwave = ms.ctx.spect.I
+        pickle.dump({'eqPops': eqPops, 'Iwave': Iwave}, pkl)
+
 start = time.time()
 ms = MsLightweaverManager(atmost, startingCtx=startingCtx)
-
-eqPops : List[SpeciesStateTable] = []
-Iwave : List[np.ndarray] = []
 ms.initial_stat_eq()
-eqPops.append(deepcopy(ms.eqPops))
-Iwave.append(deepcopy(ms.ctx.spect.I))
+save_timestep(0)
+
+
+if startingCtx is None:
+    with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
+        pickle.dump(ms.ctx, pkl)
+
 for i in range(ms.atmost['time'].shape[0] - 1):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
     ms.time_dep_step(popsTol=1e-2, JTol=2e-2)
-    eqPops.append(distill_pops(deepcopy(ms.eqPops)))
-    Iwave.append(deepcopy(ms.ctx.spect.I))
+    save_timestep(i+1)
     stepEnd = time.time()
     print('-------')
     print('Timestep %d done (%f s)' % ((i+1), ms.atmost['time'][i+1]))
