@@ -192,6 +192,10 @@ class Ar85CeaCaII(CollisionalRates):
         self.iLevel = atom.levels[self.i]
         self.jLevel = atom.levels[self.j]
 
+    def __repr__(self):
+        s = 'Ar85CeaCaII(j=%d, i=%d, fudge=%e)' % (self.j, self.i, self.fudge)
+        return s
+
     def compute_rates(self, atmos, nstar, Cmat):
         # CaII is in the K isoelectronic sequence
         zz = 20
@@ -229,6 +233,10 @@ class Shull82(CollisionalRates):
         self.atom = atom
         self.iLevel = atom.levels[self.i]
         self.jLevel = atom.levels[self.j]
+
+    def __repr__(self):
+        s = 'Shull82(row=%d, col=%d, aCol=%e, tCol=%e, aRad=%e, xRad=%e, aDi=%e, bDi=%e, to=%e, t1=%e)' % (self.row, self.col, self.aCol, self.tCol, self.aRad, self.xRad, self.aDi, self.bDi, self.t0, self.t1)
+        return s
 
     def compute_rates(self, atmos, nstar, Cmat):
         # NOTE(cmo): Summers direct recombination rates
@@ -478,13 +486,13 @@ def CaII():
 
 def He_9():
     He = He_9_atom()
-    # for l in He.lines:
-    #     l.NlambdaGen *= 2
+    for l in He.lines:
+        l.NlambdaGen //= 2
 
-    # reconfigure_atom(He)
-    for r in radTrans:
-        if r['atomName'] == He.name:
-            if r['transType'] == 'Line':
-                He.lines[r['lwIdx']].wavelength = r['wlGrid'].value
-                He.lines[r['lwIdx']].preserveWavelength = True
+    reconfigure_atom(He)
+    # for r in radTrans:
+    #     if r['atomName'] == He.name:
+    #         if r['transType'] == 'Line':
+    #             He.lines[r['lwIdx']].wavelength = r['wlGrid'].value
+    #             He.lines[r['lwIdx']].preserveWavelength = True
     return He

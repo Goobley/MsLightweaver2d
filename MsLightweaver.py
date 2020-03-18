@@ -17,7 +17,7 @@ import os.path as path
 import time
 from notify_run import Notify
 
-OutputDir = 'TimestepsRadynAtomsCrossBurgessVdwCdi_NoBurgess/'
+OutputDir = 'TimestepsRadynAtoms/'
 
 class MsLightweaverManager:
 
@@ -46,7 +46,9 @@ class MsLightweaverManager:
 
             self.mols = MolecularTable()
             self.eqPops = self.aSet.compute_eq_pops(self.mols, self.atmos)
-            self.ctx = LwContext(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte)
+            # self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
+
+            self.ctx = LwContext(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False)
 
         self.atmos.bHeat = self.atmost['bheat1'][0]
         self.atmos.hPops = self.eqPops['H']
@@ -99,6 +101,7 @@ class MsLightweaverManager:
 
             if delta < popsTol and dJ < JTol:
                 break
+        # self.ctx.time_dep_conserve_charge(prevState)
 
 filesInOutDir = [f for f in os.listdir(OutputDir) if f.startswith('Step_')]
 if len(filesInOutDir) > 0:
@@ -146,6 +149,8 @@ save_timestep(0)
 if startingCtx is None:
     with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
         pickle.dump(ms.ctx, pkl)
+
+np.save(OutputDir + 'Wavelength.npy', ms.ctx.spect.wavelength)
 
 for i in range(ms.atmost['time'].shape[0] - 1):
     stepStart = time.time()
