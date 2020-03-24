@@ -15,6 +15,7 @@ def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.nd
     ne1 = np.zeros_like(atmost.ne1)
     tg1 = np.zeros_like(atmost.tg1)
     vz1 = np.zeros_like(atmost.vz1)
+    bheat1 = np.zeros_like(atmost.bheat1)
     nh1 = np.zeros_like(atmost.nh1)
 
     for i in range(z1.shape[0]):
@@ -23,7 +24,8 @@ def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.nd
         ne1[i] = np.interp(newGrid, cmass[i], atmost.ne1[i])
         tg1[i] = np.interp(newGrid, cmass[i], atmost.tg1[i])
         vz1[i] = np.interp(newGrid, cmass[i], atmost.vz1[i])
+        bheat1[i] = np.interp(newGrid, cmass[i], atmost.bheat1[i])
         for j in range(nh1.shape[1]):
             nh1[i,j] = np.interp(newGrid, cmass[i], atmost.nh1[i,j])
 
-    return Atmost(atmost.grav, atmost.tau2, atmost.vturb, atmost.time, atmost.dt, z1, d1, ne1, tg1, vz1, nh1, cgs=atmost.cgs)
+    return Atmost(atmost.grav, atmost.tau2, atmost.vturb, atmost.time, atmost.dt, z1, d1, ne1, tg1, vz1, nh1, bheat1, cgs=atmost.cgs)

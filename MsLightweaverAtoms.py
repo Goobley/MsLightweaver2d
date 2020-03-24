@@ -1,6 +1,6 @@
 from lightweaver.rh_atoms import He_9_atom
 from lightweaver.atomic_model import reconfigure_atom, AtomicModel, AtomicLevel, VoigtLine, VdwUnsold, LineType, HydrogenicContinuum, ExplicitContinuum, CollisionalRates, VdwApprox
-from lightweaver.collisional_rates import Omega, CI, CE, Ar85Cdi, Burgess
+from lightweaver.collisional_rates import Omega, CI, CE, Ar85Cdi, Burgess, fone
 from fractions import Fraction
 from Fang import FangHRates
 import lightweaver.constants as Const
@@ -201,10 +201,11 @@ class Ar85CeaCaII(CollisionalRates):
         zz = 20
         kBT = Const.KBoltzmann * atmos.temperature / Const.EV
         # NOTE(cmo): CaII has a special case we apply directly
-        y = 0.0
-        f1y = 0.0
-        a = 6.0e-17
+        # TODO(cmo): Which bits are the branching ratios?! -- Read AR85 in more detail
+        a = 6.0e-17 # NOTE(cmo): From looking at the AR85 paper, (page 430), should this instead be 9.8e-17 (Ca+)
         iea = 25.0
+        y = iea / kBT
+        f1y = fone(y)
         b = 1.12
         cUp = 6.69e7 * a * iea / np.sqrt(kBT) * np.exp(-y)*(1.0 + b*f1y)
         # NOTE(cmo): Rates are in cm-3 s-1, so use ne in cm-3
@@ -257,7 +258,7 @@ class Shull82(CollisionalRates):
 
         
         cDown = self.aRad * (tg * 1e-4)**-self.xRad
-        cDown += summers * self.aDi / tg / np.sqrt(tg) * np.exp(self.t0 / tg) * (1.0 + self.bDi * np.exp(-self.t1 / tg))
+        cDown += summers * self.aDi / tg / np.sqrt(tg) * np.exp(-self.t0 / tg) * (1.0 + self.bDi * np.exp(-self.t1 / tg))
 
         cUp = self.aCol * np.sqrt(tg) * np.exp(-self.tCol / tg) / (1.0 + 0.1 * tg / self.tCol)
 

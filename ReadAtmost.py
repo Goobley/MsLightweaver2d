@@ -15,6 +15,7 @@ class Atmost:
     tg1: np.ndarray
     vz1: np.ndarray
     nh1: np.ndarray
+    bheat1: np.ndarray
 
     cgs: bool = True
 
@@ -28,6 +29,9 @@ class Atmost:
         self.ne1 *= 1e6
         self.vz1 /= 1e2
         self.nh1 *= 1e6
+
+        # NOTE(cmo): we don't change the units on bheat1, since it's only used
+        # for the Fang rates, which are entirely described with cgs.
 
         self.cgs = False
 
@@ -71,6 +75,7 @@ def read_atmost(filename='atmost.dat') -> Atmost:
         tg1t = []
         vz1t = []
         nh1t = []
+        bheat1t = []
         while True:
             # Record: itype 4, isize 4, cname 8 : 16
             _ = np.fromfile(f, np.int32, 1)
@@ -83,6 +88,7 @@ def read_atmost(filename='atmost.dat') -> Atmost:
             # d1 8 * ndep(300), ne1 8 * ndep(300), 
             # tg1 8 * ndep(300), vz1 8 * ndep(300),
             # nh1 8 * 6 * ndep(300): 26416
+            # bheat1 8 * ndep(300): 26416 + 2400
             _ = np.fromfile(f, np.int32, 1)
             times.append(np.fromfile(f, np.float64, 1))
             if times[-1].shape != (1,):
@@ -95,6 +101,7 @@ def read_atmost(filename='atmost.dat') -> Atmost:
             tg1t.append(np.fromfile(f, np.float64, ndep[0]))
             vz1t.append(np.fromfile(f, np.float64, ndep[0]))
             nh1t.append(np.fromfile(f, np.float64, ndep[0] * 6).reshape(6, ndep[0]))
+            bheat1t.append(np.fromfile(f, np.float64, ndep[0]))
             _ = np.fromfile(f, np.int32, 1)
 
     times = np.array(times).squeeze()
@@ -106,5 +113,5 @@ def read_atmost(filename='atmost.dat') -> Atmost:
     vz1t = np.array(vz1t).squeeze()
     nh1t = np.array(nh1t).squeeze()
 
-    return Atmost(grav.item(), tau2.item(), vturb, times, dtns, z1t, d1t, ne1t, tg1t, vz1t, nh1t)
+    return Atmost(grav.item(), tau2.item(), vturb, times, dtns, z1t, d1t, ne1t, tg1t, vz1t, nh1t, bheat1t)
 
