@@ -20,7 +20,7 @@ from radynpy.matsplotlib import OpcFile
 from radynpy.utils import hydrogen_absorption
 from numba import njit
 
-OutputDir = 'TimestepsRadynAtomsMaybeFixed/'
+OutputDir = 'TimestepsRadynCeaFinal/'
 
 # def planck_nu_freq(nu, t):
 #     x = Const.HPlanck * nu / Const.KBoltzmann / t
@@ -73,10 +73,10 @@ class MsLightweaverManager:
             self.spect = self.aSet.compute_wavelength_grid()
 
             self.mols = MolecularTable()
-            self.eqPops = self.aSet.compute_eq_pops(self.mols, self.atmos)
+            self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
             # self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
 
-            self.ctx = LwContext(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False)
+            self.ctx = LwContext(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=8)
 
         self.atmos.bHeat = self.atmost['bheat1'][0]
         self.atmos.hPops = self.eqPops['H']
@@ -130,7 +130,7 @@ class MsLightweaverManager:
         tg1 = self.atmos.temperature
         hPops = (self.atmos.hPops / 1e6).T
         nHTot = self.atmos.nHTot / 1e6
-        _, xcont = hydrogen_absorption(xlamb, -1, tg1, ne1, hPops)
+        _, xcont = hydrogen_absorption(xlamb, -1, tg1, ne1, hPops, explicitLevels=False)
 
         # NOTE(cmo): Scattering
         xlimit = 1026.0
@@ -286,7 +286,7 @@ for i in range(ms.atmost['time'].shape[0] - 1):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=1e-2, JTol=2e-2)
+    ms.time_dep_step(popsTol=1e-3, JTol=5e-3)
     save_timestep(i+1)
     stepEnd = time.time()
     print('-------')
