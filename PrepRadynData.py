@@ -18,16 +18,20 @@ cmassGrid = cmass[-1]
 
 staticAtmost = interp_to_const_cmass_grid(atmost, cmass, cmassGrid)
 
-# bHeats = []
-# for cdfIdx, t in enumerate(radyn.time):
-#     idx = np.searchsorted(atmost.time, t)
-#     bHeats.append(np.interp(cmassGrid, cmass[idx], radyn.bheat1[cdfIdx]))
-    
-# bHeatArr = np.array(bHeats)
-# bHeat1 = interp1d(radyn.time, bHeatArr.T)(atmost.time).T
+interpBheat = (atmost.bheat1.shape[0] == 0)
+if interpBheat:
+    bHeats = []
+    for cdfIdx, t in enumerate(radyn.time):
+        idx = np.searchsorted(atmost.time, t)
+        bHeats.append(np.interp(cmassGrid, cmass[idx], radyn.bheat1[cdfIdx]))
+        
+    bHeatArr = np.array(bHeats)
+    bHeat1 = interp1d(radyn.time, bHeatArr.T)(atmost.time).T
 
 radynData = staticAtmost.__dict__
-# radynData['bheat1'] = bHeat1
+if interpBheat:
+    radynData['bheat1'] = bHeat1
+
 radynData['cmass'] = cmass
 radynData['cmassGrid'] = cmassGrid
 

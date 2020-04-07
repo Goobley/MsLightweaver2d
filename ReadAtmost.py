@@ -89,7 +89,11 @@ def read_atmost(filename='atmost.dat') -> Atmost:
             # tg1 8 * ndep(300), vz1 8 * ndep(300),
             # nh1 8 * 6 * ndep(300): 26416
             # bheat1 8 * ndep(300): 26416 + 2400
-            _ = np.fromfile(f, np.int32, 1)
+            recordSize = np.fromfile(f, np.int32, 1)
+            if (recordSize - 16) / (8 * ndep[0]) == 11:
+                bheat = False
+            else:
+                bheat = True
             times.append(np.fromfile(f, np.float64, 1))
             if times[-1].shape != (1,):
                 times.pop()
@@ -101,7 +105,8 @@ def read_atmost(filename='atmost.dat') -> Atmost:
             tg1t.append(np.fromfile(f, np.float64, ndep[0]))
             vz1t.append(np.fromfile(f, np.float64, ndep[0]))
             nh1t.append(np.fromfile(f, np.float64, ndep[0] * 6).reshape(6, ndep[0]))
-            bheat1t.append(np.fromfile(f, np.float64, ndep[0]))
+            if bheat:
+                bheat1t.append(np.fromfile(f, np.float64, ndep[0]))
             _ = np.fromfile(f, np.int32, 1)
 
     times = np.array(times).squeeze()
@@ -112,6 +117,7 @@ def read_atmost(filename='atmost.dat') -> Atmost:
     tg1t = np.array(tg1t).squeeze()
     vz1t = np.array(vz1t).squeeze()
     nh1t = np.array(nh1t).squeeze()
+    bheat1t = np.array(bheat1t).squeeze()
 
     return Atmost(grav.item(), tau2.item(), vturb, times, dtns, z1t, d1t, ne1t, tg1t, vz1t, nh1t, bheat1t)
 

@@ -10,6 +10,8 @@ def compute_cmass(atmost: Atmost) -> np.ndarray:
     return cmass
 
 def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.ndarray, interp_fn=np.interp) -> Atmost:
+    computeBheat = (atmost.bheat1.shape[0] != 0)
+
     z1 = np.zeros_like(atmost.z1)
     d1 = np.zeros_like(atmost.d1)
     ne1 = np.zeros_like(atmost.ne1)
@@ -24,7 +26,8 @@ def interp_to_const_cmass_grid(atmost: Atmost, cmass: np.ndarray, newGrid: np.nd
         ne1[i] = np.interp(newGrid, cmass[i], atmost.ne1[i])
         tg1[i] = np.interp(newGrid, cmass[i], atmost.tg1[i])
         vz1[i] = np.interp(newGrid, cmass[i], atmost.vz1[i])
-        bheat1[i] = np.interp(newGrid, cmass[i], atmost.bheat1[i])
+        if computeBheat:
+            bheat1[i] = np.interp(newGrid, cmass[i], atmost.bheat1[i])
         for j in range(nh1.shape[1]):
             nh1[i,j] = np.interp(newGrid, cmass[i], atmost.nh1[i,j])
 
