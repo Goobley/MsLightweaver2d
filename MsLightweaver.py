@@ -313,7 +313,6 @@ if startingCtx is None:
         pickle.dump(ms.ctx, pkl)
 
 maxSteps = ms.atmost['time'].shape[0] - 1
-maxSteps = 5
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]
 for i in range(maxSteps):
     stepStart = time.time()
