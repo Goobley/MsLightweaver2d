@@ -21,10 +21,11 @@ from radynpy.utils import hydrogen_absorption
 from numba import njit
 from pathlib import Path
 
-OutputDir = 'TimestepsNasa/'
+OutputDir = 'TimestepsNasaAdv/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
+NumInterfaces = 4096
 
 # def planck_nu_freq(nu, t):
 #     x = Const.HPlanck * nu / Const.KBoltzmann / t
@@ -353,7 +354,7 @@ def save_timestep(i):
         pickle.dump({'eqPops': eqPops, 'Iwave': Iwave}, pkl)
 
 start = time.time()
-ms = MsLightweaverManager(atmost, startingCtx=startingCtx)
+ms = MsLightweaverManager(atmost, NumInterfaces, startingCtx=startingCtx)
 ms.initial_stat_eq()
 save_timestep(0)
 np.save(OutputDir + 'Wavelength.npy', ms.ctx.spect.wavelength)

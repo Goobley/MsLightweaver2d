@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 
 def cfl(grid, data):
     vel = np.abs(data[0])
-    dt = 0.4 * np.min(grid.dx / vel)
+    dt = 0.8 * np.min(grid.dx / vel)
     return dt
 
 class MsLightweaverAdvector:
@@ -53,13 +53,13 @@ class MsLightweaverAdvector:
         vel = interp1d(self.refCmass[::-1], self.atmost['vz1'][idx, ::-1], kind=3, fill_value=0.0, bounds_error=False)(cmass)
         return vel
     
-    def step(self):
+    def step(self, numSubSteps=5000):
         self.ad.data[0, self.grid.griBeg:self.grid.griEnd] = self.vel(self.idx)
         dtRadyn = self.atmost['dt'][self.idx+1]
         dtMax = cfl(self.grid, self.ad.data)
         if dtRadyn > dtMax:
             subTime = 0.0
-            for i in range(500):
+            for i in range(numSubSteps):
                 dt = dtMax
                 if subTime + dt > dtRadyn:
                     dt = dtRadyn - subTime
