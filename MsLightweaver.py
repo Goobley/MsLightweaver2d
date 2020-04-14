@@ -20,12 +20,13 @@ from radynpy.matsplotlib import OpcFile
 from radynpy.utils import hydrogen_absorption
 from numba import njit
 from pathlib import Path
+from scipy.linalg import solve
 
-OutputDir = 'TimestepsNasaAdv/'
+OutputDir = 'TimestepsBasicAdv/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
-NumInterfaces = 4096
+NumInterfaces = 1024
 
 # def planck_nu_freq(nu, t):
 #     x = Const.HPlanck * nu / Const.KBoltzmann / t
@@ -110,12 +111,22 @@ class MsLightweaverManager:
         numPopRows = 0
         for atom in self.aSet.activeAtoms:
             numPopRows += self.eqPops[atom.name].shape[0]
+
+        try:
+            self.atmos.originalHeight
+        except AttributeError:
+            self.atmos.originalHeight = np.copy(self.atmos.height)
         
-        self.atmos.convert_scales()
         # Expand grid slightly with linear extrapolation, so cmass interfaces are preserved better for interpolation back
-        staticHeightInterfaces = interp1d(np.linspace(0, 1, self.atmos.height.shape[0]), self.atmos.height[::-1], fill_value='extrapolate')(np.linspace(-0.01, 1.01, numInterfaces))
+        staticHeightInterfaces = interp1d(np.linspace(0, 1, self.atmos.height.shape[0]),
+                                          self.atmos.originalHeight[::-1], 
+                                          fill_value='extrapolate')(np.linspace(-0.02,
+                                                                                1.01, 
+                                                                                numInterfaces))
         self.staticGrid = Grid(staticHeightInterfaces, 4)
-        self.adv = MsLightweaverAdvector(self.staticGrid, self.atmos.height, self.atmos.cmass, self.atmost, simple_advection_bcs(), numPopRows=numPopRows)
+        self.adv = MsLightweaverAdvector(self.staticGrid, self.atmos.originalHeight, 
+                                         self.atmos.cmass, self.atmost,
+                                         simple_advection_bcs(), numPopRows=numPopRows)
         # Make height and density grid self-consistent with hydro. Slight offsets appear due to cell-centres vs interfaces
         self.atmos.height[:] = self.adv.height_from_cmass(self.atmos.cmass)
         newRho = self.adv.rho_from_cmass(self.atmos.cmass)
@@ -245,11 +256,15 @@ class MsLightweaverManager:
 
     def advect_pops(self):
         activePops = []
+        popSizes = []
         for atom in self.aSet.activeAtoms:
-            activePops.append(self.eqPops[atom.name])
+            p = self.eqPops[atom.name]
+            p = p / np.sum(p, axis=0)
+            activePops.append(p)
+            popSizes.append(p.shape[0])
         pops = np.concatenate(activePops, axis=0)
 
-        self.adv.fill_from_pops(self.atmos.cmass, pops)
+        self.adv.fill_from_pops(self.atmos.cmass, pops, popSizes)
         self.adv.step()
 
         newPops = self.adv.interp_to_cmass(self.atmos.cmass)
@@ -283,17 +298,57 @@ class MsLightweaverManager:
         self.ctx.update_deps()
         # self.opac_background()
 
+    def time_dep_prev_state(self):
+        s = {}
+        s['pops'] = [np.copy(a.n) for a in self.ctx.activeAtoms]
+        s['Gamma'] = [np.copy(a.Gamma) for a in self.ctx.activeAtoms]
+        return s
+
+    def time_dep_update(self, dt, prevState, theta=0.5):
+        atoms = self.ctx.activeAtoms
+        Nspace = self.atmos.Nspace
+
+        maxDelta = 0.0
+        for i, atom in enumerate(atoms):
+            Nlevel = atom.Nlevel
+
+            Gamma = np.zeros((Nlevel, Nlevel))
+            nk = np.zeros(Nlevel)
+            nPrev = np.zeros(Nlevel)
+            nCurrent = np.zeros(Nlevel)
+            n = atom.n
+
+            atomDelta = 0.0
+
+            for k in range(Nspace):
+                nCurrent[:] = atom.n[:, k]
+                nPrev[:] = prevState['pops'][i][:, k]
+                Gamma[...] = -theta * atom.Gamma[:,:, k] * dt
+                Gamma += np.eye(Nlevel)
+                nk[:] = -(1.0 - theta) * dt * prevState['Gamma'][i][:,:, k] @ nPrev + nPrev 
+
+                nNew = solve(Gamma, nk)
+                n[:, k] = nNew
+                atomDelta = max(atomDelta, np.nanmax(np.abs(1.0 - nCurrent / nNew)))
+
+            maxDelta = max(maxDelta, atomDelta)
+            s = '    %s delta = %6.4e' % (atom.atomicModel.name, atomDelta)
+            print(s)
+
+        return maxDelta
+
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3):
         dt = self.atmost['dt'][self.idx+1]
         # self.ctx.spect.J[:] = 0.0
 
-        prevState = None
+        prevState = self.time_dep_prev_state()
         for sub in range(nSubSteps):
             self.JPrev[:] = self.ctx.spect.J
 
             dJ = self.ctx.formal_sol_gamma_matrices()
             # if sub > 2:
-            delta, prevState = self.ctx.time_dep_update(dt, prevState)
+            # delta, prevState = self.ctx.time_dep_update(dt, prevState)
+            delta = self.time_dep_update(dt, prevState)
 
             if sub > 1 and delta < popsTol and dJ < JTol:
                 break
@@ -371,6 +426,7 @@ np.save(OutputDir + 'Wavelength.npy', ms.ctx.spect.wavelength)
 if startingCtx is None:
     with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
         pickle.dump(ms.ctx, pkl)
+raise ValueError
 
 maxSteps = ms.atmost['time'].shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]

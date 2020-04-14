@@ -22,11 +22,16 @@ class MsLightweaverAdvector:
 
         self.ad = Advector(grid, startData, bcs, reconstruct_weno_nm_z)
 
-    def fill_from_pops(self, cmassGrid, pops):
+    def fill_from_pops(self, cmassGrid, pops, popDims):
         cmass = self.cmass
         data = self.data[:, self.grid.griBeg:self.grid.griEnd]
         for i in range(pops.shape[0]):
             data[i+2, :] = interp1d(cmassGrid, pops[i], kind=1, fill_value=(pops[i][0], pops[i][-1]), bounds_error=False)(cmass)
+            
+        start = 2
+        for p in popDims:
+            data[start:start+p, :] /= np.sum(data[start:start+p, :], axis=0)
+            start += p
 
     def interp_to_cmass(self, cmassGrid):
         pops = np.zeros((self.data.shape[0]-2, cmassGrid.shape[0]))

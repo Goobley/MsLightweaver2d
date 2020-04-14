@@ -16,7 +16,7 @@ atmost.to_SI()
 cmass = compute_cmass(atmost)
 # cmassGrid = cmass[-1]
 cmassGrid = cmass[0]
-cmassGrid = np.interp(np.linspace(0, 1, 400), np.linspace(0, 1, cmass[0].shape[0]), cmass[0])
+# cmassGrid = np.interp(np.linspace(0, 1, 400), np.linspace(0, 1, cmass[0].shape[0]), cmass[0])
 
 staticAtmost = interp_to_const_cmass_grid(atmost, cmass, cmassGrid)
 
