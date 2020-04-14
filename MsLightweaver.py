@@ -22,11 +22,16 @@ from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
 
-OutputDir = 'TimestepsBasicAdv/'
+OutputDir = 'TimestepsNasaBasic/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
 NumInterfaces = 1024
+NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
+             MgII_atom(), N_atom(), Na_atom(), S_atom()]
+FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
+                MgII_atom(), N_atom(), Na_atom(), S_atom()]
+DoAdvection = False
 
 # def planck_nu_freq(nu, t):
 #     x = Const.HPlanck * nu / Const.KBoltzmann / t
@@ -74,6 +79,7 @@ class MsLightweaverManager:
         self.atmost = atmost
         self.at = get_global_atomic_table()
         self.idx = 0
+        self.nHTot = atmost['d1'] / (self.at.weightPerH * Const.Amu)
         self.numInterfaces = numInterfaces
 
         if startingCtx is not None:
@@ -89,7 +95,7 @@ class MsLightweaverManager:
             self.atmos.convert_scales()
             self.atmos.quadrature(5)
 
-            self.aSet = RadiativeSet([H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), MgII_atom(), N_atom(), Na_atom(), S_atom()])
+            self.aSet = RadiativeSet(NasaAtoms)
             self.aSet.set_active('H', 'Ca')
             # NOTE(cmo): Radyn seems to compute the collisional rates once per
             # timestep(?) and we seem to get a much better agreement for Ca
@@ -108,31 +114,32 @@ class MsLightweaverManager:
         self.atmos.bHeat = np.ones_like(self.atmost['bheat1'][0]) * 1e-20
         self.atmos.hPops = self.eqPops['H']
 
-        numPopRows = 0
-        for atom in self.aSet.activeAtoms:
-            numPopRows += self.eqPops[atom.name].shape[0]
+        if DoAdvection:
+            numPopRows = 0
+            for atom in self.aSet.activeAtoms:
+                numPopRows += self.eqPops[atom.name].shape[0]
 
-        try:
-            self.atmos.originalHeight
-        except AttributeError:
-            self.atmos.originalHeight = np.copy(self.atmos.height)
-        
-        # Expand grid slightly with linear extrapolation, so cmass interfaces are preserved better for interpolation back
-        staticHeightInterfaces = interp1d(np.linspace(0, 1, self.atmos.height.shape[0]),
-                                          self.atmos.originalHeight[::-1], 
-                                          fill_value='extrapolate')(np.linspace(-0.02,
-                                                                                1.01, 
-                                                                                numInterfaces))
-        self.staticGrid = Grid(staticHeightInterfaces, 4)
-        self.adv = MsLightweaverAdvector(self.staticGrid, self.atmos.originalHeight, 
-                                         self.atmos.cmass, self.atmost,
-                                         simple_advection_bcs(), numPopRows=numPopRows)
-        # Make height and density grid self-consistent with hydro. Slight offsets appear due to cell-centres vs interfaces
-        self.atmos.height[:] = self.adv.height_from_cmass(self.atmos.cmass)
-        newRho = self.adv.rho_from_cmass(self.atmos.cmass)
-        self.atmos.nHTot[:] = newRho / (self.at.weightPerH*Const.Amu)
-        self.eqPops.update_lte_atoms_Hmin_pops(self.atmos)
-        self.JPrev = np.copy(self.ctx.spect.J)
+            try:
+                self.atmos.originalHeight
+            except AttributeError:
+                self.atmos.originalHeight = np.copy(self.atmos.height)
+            
+            # Expand grid slightly with linear extrapolation, so cmass interfaces are preserved better for interpolation back
+            staticHeightInterfaces = interp1d(np.linspace(0, 1, self.atmos.height.shape[0]),
+                                            self.atmos.originalHeight[::-1], 
+                                            fill_value='extrapolate')(np.linspace(-0.02,
+                                                                                    1.01, 
+                                                                                    numInterfaces))
+            self.staticGrid = Grid(staticHeightInterfaces, 4)
+            self.adv = MsLightweaverAdvector(self.staticGrid, self.atmos.originalHeight, 
+                                            self.atmos.cmass, self.atmost,
+                                            simple_advection_bcs(), numPopRows=numPopRows)
+            # Make height and density grid self-consistent with hydro. Slight offsets appear due to cell-centres vs interfaces
+            self.atmos.height[:] = self.adv.height_from_cmass(self.atmos.cmass)
+            newRho = self.adv.rho_from_cmass(self.atmos.cmass)
+            self.atmos.nHTot[:] = newRho / (self.at.weightPerH*Const.Amu)
+            self.eqPops.update_lte_atoms_Hmin_pops(self.atmos)
+            self.JPrev = np.copy(self.ctx.spect.J)
 
         # NOTE(cmo): Set up background
         # self.opc = OpcFile('opctab_cmo_mslw.dat')
@@ -284,18 +291,21 @@ class MsLightweaverManager:
             takeFrom += nLevels
 
     def increment_step(self):
-        self.advect_pops()
+        if DoAdvection:
+            self.advect_pops()
         self.idx += 1
         self.atmos.temperature[:] = self.atmost['tg1'][self.idx]
         self.atmos.vlos[:] = self.atmost['vz1'][self.idx]
         self.atmos.ne[:] = self.atmost['ne1'][self.idx]
         # Now done with the advection
-        # self.atmos.nHTot[:] = self.nHTot[self.idx]
+        if not DoAdvection:
+            self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost['bheat1'][self.idx]
 
         # self.atmos.convert_scales()
         # NOTE(cmo): Convert scales is slow due to recomputing the tau500 opacity (pure python EOS), we only really need the height at the moment. So let's just do that quickly here.
-        # self.update_height()
+        if not DoAdvection:
+            self.update_height()
         # NOTE(cmo): Yes, for now this is also recomputing the background... it'll be fine though
         self.ctx.update_deps()
         # self.opac_background()
@@ -327,7 +337,7 @@ class MsLightweaverManager:
                 nPrev[:] = prevState['pops'][i][:, k]
                 Gamma[...] = -theta * atom.Gamma[:,:, k] * dt
                 Gamma += np.eye(Nlevel)
-                nk[:] = -(1.0 - theta) * dt * prevState['Gamma'][i][:,:, k] @ nPrev + nPrev 
+                nk[:] = (1.0 - theta) * dt * prevState['Gamma'][i][:,:, k] @ nPrev + nPrev 
 
                 nNew = solve(Gamma, nk)
                 n[:, k] = nNew
@@ -345,7 +355,7 @@ class MsLightweaverManager:
 
         prevState = self.time_dep_prev_state()
         for sub in range(nSubSteps):
-            self.JPrev[:] = self.ctx.spect.J
+            # self.JPrev[:] = self.ctx.spect.J
 
             dJ = self.ctx.formal_sol_gamma_matrices()
             # if sub > 2:
