@@ -232,11 +232,11 @@ class MsLightweaverManager:
         prevState = None
         for sub in range(nSubSteps):
             dJ = self.ctx.formal_sol_gamma_matrices()
-            if sub > 2:
-                delta, prevState = self.ctx.time_dep_update(dt, prevState)
+            # if sub > 2:
+            delta, prevState = self.ctx.time_dep_update(dt, prevState)
 
-                if delta < popsTol and dJ < JTol:
-                    break
+            if sub > 1 and delta < popsTol and dJ < JTol:
+                break
         else:
             self.ctx.depthData.fill = True
             self.ctx.formal_sol_gamma_matrices()
