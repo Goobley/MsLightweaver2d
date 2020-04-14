@@ -278,7 +278,9 @@ class MsLightweaverManager:
         for atom in self.aSet.activeAtoms:
             atomPop = self.eqPops[atom.name]
             nLevels = atomPop.shape[0]
-            atomPop[:] = newPops[takeFrom:takeFrom+nLevels, :]
+            p = newPops[takeFrom:takeFrom+nLevels, :]
+            p = p / np.sum(p, axis=0)
+            atomPop[:] = p * self.atmos.nHTot * self.at[atom.name].abundance
             takeFrom += nLevels
 
     def increment_step(self):
@@ -426,7 +428,6 @@ np.save(OutputDir + 'Wavelength.npy', ms.ctx.spect.wavelength)
 if startingCtx is None:
     with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
         pickle.dump(ms.ctx, pkl)
-raise ValueError
 
 maxSteps = ms.atmost['time'].shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]
