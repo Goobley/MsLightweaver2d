@@ -18,7 +18,7 @@ cmassGrid = cmass[-1]
 # cmassGrid = cmass[0]
 # cmassGrid = np.interp(np.linspace(0, 1, 400), np.linspace(0, 1, cmass[0].shape[0]), cmass[0])
 
-NumPoints = 1500
+NumPoints = 3000
 ResolutionSplitPoint = 2e6
 LowerFraction = 0.85
 LowerPoints = int(NumPoints * LowerFraction)
@@ -34,7 +34,7 @@ height = interp1d(np.linspace(0, 1, 300), atmost.z1[0])(np.linspace(0, 1, NumPoi
 HeightGrid = True
 
 
-interp_fn = lambda pts, x, y: interp1d(x, y)(pts)
+interp_fn = lambda pts, x, y: interp1d(x, y, kind=3)(pts)
 if HeightGrid:
     staticAtmost = interp_to_const_height_grid(atmost, height, interp_fn=interp_fn)
 else:

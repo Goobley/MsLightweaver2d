@@ -34,13 +34,6 @@ FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
 DoAdvection = False
 
-# def planck_nu_freq(nu, t):
-#     x = Const.HPlanck * nu / Const.KBoltzmann / t
-#     pre = 2.0 * Const.HPlanck * nu**3 / Const.CLight**2
-
-#     B = np.where(x < 80.0, pre / (np.exp(x) - 1.0), pre * np.exp(-x))
-#     return B
-
 @njit
 def find_subarray(a, b):
     '''
@@ -116,6 +109,9 @@ class MsLightweaverManager:
             self.eqPops = args['eqPops']
         else:
             cmassGrid = 'cmassGrid' in atmost
+
+            if DoAdvection and cmassGrid:
+                raise ValueError('Currenttly not supporting cmassGrid and advection')
 
             nHTot = atmost['d1'][0] / (self.at.weightPerH * Const.Amu)
             if cmassGrid:
