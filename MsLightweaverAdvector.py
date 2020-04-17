@@ -160,8 +160,9 @@ class MsLightweaverAdvectorHeight:
             vel2 = interp1d(self.heightGrid[::-1], self.atmost['vz1'][idx+1, ::-1], 
                             kind=1, fill_value=0.0, bounds_error=False)(self.heightCc)
             # TODO(cmo): Maybe add some interpolation smoothing, like cosine
-            vel *= (1.0 - timeStepAdvance)
-            vel += vel2 * timeStepAdvance
+            cosFac = 0.5 * (1.0 - np.cos(timeStepAdvance * np.pi))
+            vel *= (1.0 - cosFac)
+            vel += vel2 * cosFac
         return vel
     
     def step(self, numSubSteps=5000):
