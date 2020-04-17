@@ -9,6 +9,7 @@ from lightweaver.molecule import MolecularTable
 from lightweaver.LwCompiled import LwContext
 from lightweaver.utils import InitialSolution, planck, NgOptions, ConvergenceError
 import lightweaver.constants as Const
+import lightweaver as lw
 from typing import List
 from copy import deepcopy
 from MsLightweaverAtoms import H_6, CaII, He_9, H_6_nasa, CaII_nasa
@@ -22,7 +23,7 @@ from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
 
-OutputDir = 'TimestepsNasaBasicCn2/'
+OutputDir = 'TimestepsHeightTheta55/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -73,6 +74,30 @@ def simple_advection_bcs():
 
     return apply_bcs
 
+@njit
+def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
+    Nlevel = n.shape[0]
+    Nspace = n.shape[1]
+
+    Gam = np.zeros((Nlevel, Nlevel))
+    nk = np.zeros(Nlevel)
+    nPrevIter = np.zeros(Nlevel)
+    nCurrent = np.zeros(Nlevel)
+    atomDelta = 0.0
+
+    for k in range(Nspace):
+        nCurrent[:] = n[:, k]
+        nPrevIter[:] = nPrev[:, k]
+        Gam[...] = -theta * Gamma[:,:, k] * dt
+        Gam += np.eye(Nlevel)
+        nk[:] = (1.0 - theta) * dt * GammaPrev[:,:, k] @ nPrevIter + nPrevIter
+
+        nNew = np.linalg.solve(Gam, nk)
+        n[:, k] = nNew
+        atomDelta = max(atomDelta, np.nanmax(np.abs(1.0 - nCurrent / nNew)))
+
+    return atomDelta
+
 class MsLightweaverManager:
 
     def __init__(self, atmost, numInterfaces, startingCtx=None):
@@ -90,12 +115,18 @@ class MsLightweaverManager:
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
         else:
+            cmassGrid = 'cmassGrid' in atmost
+
             nHTot = atmost['d1'][0] / (self.at.weightPerH * Const.Amu)
-            self.atmos = Atmosphere(scale=ScaleType.ColumnMass, depthScale=np.copy(atmost['cmassGrid']), temperature=np.copy(atmost['tg1'][0]), vlos=np.copy(atmost['vz1'][0]), vturb=np.copy(atmost['vturb']), ne=np.copy(atmost['ne1'][0]), nHTot=nHTot)
+            if cmassGrid:
+                self.atmos = Atmosphere(scale=ScaleType.ColumnMass, depthScale=np.copy(atmost['cmassGrid']), temperature=np.copy(atmost['tg1'][0]), vlos=np.copy(atmost['vz1'][0]), vturb=np.copy(atmost['vturb']), ne=np.copy(atmost['ne1'][0]), nHTot=nHTot)
+            else:
+                self.atmos = Atmosphere(scale=ScaleType.Geometric, depthScale=np.copy(atmost['zGrid']), temperature=np.copy(atmost['tg1'][0]), vlos=np.copy(atmost['vz1'][0]), vturb=np.copy(atmost['vturb']), ne=np.copy(atmost['ne1'][0]), nHTot=nHTot)
+
             self.atmos.convert_scales()
             self.atmos.quadrature(5)
 
-            self.aSet = RadiativeSet(NasaAtoms)
+            self.aSet = RadiativeSet(FchromaAtoms)
             self.aSet.set_active('H', 'Ca')
             # NOTE(cmo): Radyn seems to compute the collisional rates once per
             # timestep(?) and we seem to get a much better agreement for Ca
@@ -234,7 +265,7 @@ class MsLightweaverManager:
             self.ctx.background.chi[idxs, :] = chi
             self.ctx.background.sca[idxs, :] = sca
 
-    def initial_stat_eq(self, nScatter=3, nMaxIter=1000):
+    def initial_stat_eq(self, nScatter=3, nMaxIter=1000, popTol=1e-3, JTol=3e-3):
         for i in range(nMaxIter):
             dJ = self.ctx.formal_sol_gamma_matrices()
             if i < nScatter:
@@ -242,13 +273,16 @@ class MsLightweaverManager:
 
             delta = self.ctx.stat_equil()
 
-            if self.ctx.crswDone and dJ < 3e-3 and delta < 1e-3:
+            if self.ctx.crswDone and dJ < JTol and delta < popTol:
                 print('Stat eq converged in %d iterations' % (i+1))
                 break
         else:
             raise ConvergenceError('Stat Eq did not converge.')
 
     def update_height(self):
+        if self.atmos.scale == lw.ScaleType.Geometric:
+            return
+
         height = self.atmos.height
         cmass = self.atmos.cmass
         rhoSI = self.atmost['d1'][self.idx]
@@ -334,26 +368,8 @@ class MsLightweaverManager:
 
         maxDelta = 0.0
         for i, atom in enumerate(atoms):
-            Nlevel = atom.Nlevel
-
-            Gamma = np.zeros((Nlevel, Nlevel))
-            nk = np.zeros(Nlevel)
-            nPrev = np.zeros(Nlevel)
-            nCurrent = np.zeros(Nlevel)
-            n = atom.n
-
-            atomDelta = 0.0
-
-            for k in range(Nspace):
-                nCurrent[:] = atom.n[:, k]
-                nPrev[:] = prevState['pops'][i][:, k]
-                Gamma[...] = -theta * atom.Gamma[:,:, k] * dt
-                Gamma += np.eye(Nlevel)
-                nk[:] = (1.0 - theta) * dt * prevState['Gamma'][i][:,:, k] @ nPrev + nPrev 
-
-                nNew = solve(Gamma, nk)
-                n[:, k] = nNew
-                atomDelta = max(atomDelta, np.nanmax(np.abs(1.0 - nCurrent / nNew)))
+            atomDelta = time_dep_update_impl(theta, dt, atom.Gamma, prevState['Gamma'][i],
+                                             atom.n, prevState['pops'][i])
 
             maxDelta = max(maxDelta, atomDelta)
             s = '    %s delta = %6.4e' % (atom.atomicModel.name, atomDelta)
@@ -361,7 +377,7 @@ class MsLightweaverManager:
 
         return maxDelta
 
-    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3):
+    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
         dt = self.atmost['dt'][self.idx+1]
         # self.ctx.spect.J[:] = 0.0
 
@@ -372,7 +388,7 @@ class MsLightweaverManager:
             dJ = self.ctx.formal_sol_gamma_matrices()
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
-            delta = self.time_dep_update(dt, prevState)
+            delta = self.time_dep_update(dt, prevState, theta=theta)
 
             if sub > 1 and delta < popsTol and dJ < JTol:
                 break
@@ -434,7 +450,7 @@ def save_timestep(i):
 
 start = time.time()
 ms = MsLightweaverManager(atmost, NumInterfaces, startingCtx=startingCtx)
-ms.initial_stat_eq()
+ms.initial_stat_eq(popTol=1e-3)
 save_timestep(0)
 np.save(OutputDir + 'Wavelength.npy', ms.ctx.spect.wavelength)
 
@@ -454,7 +470,7 @@ if startingCtx is None:
 maxSteps = ms.atmost['time'].shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]
 firstStep = 0
-firstStep = 7685
+# firstStep = 7685
 if firstStep != 0:
     ms.load_timestep(firstStep)
     ms.ctx.spect.J[:] = 0.0
@@ -464,7 +480,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000)
+    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=0.55)
     ms.ctx.clear_ng()
     save_timestep(i+1)
     stepEnd = time.time()
