@@ -22,7 +22,7 @@ from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
 
-OutputDir = 'TimestepsNasaBasic/'
+OutputDir = 'TimestepsNasaBasicCn2/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -290,6 +290,18 @@ class MsLightweaverManager:
             atomPop[:] = p * self.atmos.nHTot * self.at[atom.name].abundance
             takeFrom += nLevels
 
+    def load_timestep(self, stepNum):
+        with open(OutputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
+            step = pickle.load(pkl)
+
+        for name, pops in step['eqPops'].items():
+            if pops['n'] is not None:
+                self.eqPops.atomicPops[name].pops[:] = pops['n']
+            self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
+
+        self.idx = stepNum - 1
+        self.increment_step()
+
     def increment_step(self):
         if DoAdvection:
             self.advect_pops()
@@ -298,7 +310,7 @@ class MsLightweaverManager:
         self.atmos.vlos[:] = self.atmost['vz1'][self.idx]
         self.atmos.ne[:] = self.atmost['ne1'][self.idx]
         # Now done with the advection
-        if not DoAdvection:
+        if False and not DoAdvection:
             self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost['bheat1'][self.idx]
 
@@ -441,11 +453,18 @@ if startingCtx is None:
 
 maxSteps = ms.atmost['time'].shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]
-for i in range(maxSteps):
+firstStep = 0
+firstStep = 7685
+if firstStep != 0:
+    ms.load_timestep(firstStep)
+    ms.ctx.spect.J[:] = 0.0
+    ms.ctx.formal_sol_gamma_matrices()
+
+for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=1e-3, JTol=5e-3)
+    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000)
     ms.ctx.clear_ng()
     save_timestep(i+1)
     stepEnd = time.time()
