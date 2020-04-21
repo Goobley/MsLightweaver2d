@@ -42,6 +42,10 @@ class VdwRadyn(VdwApprox):
 # NOTE(cmo): Ignoring the continua (bf) grids for now, they shouldn't be important here, and would cause us to need to mess around with our cross-section grids
 
 def H_6():
+    radynQNorm = 12.85e3
+    qNormRatio = radynQNorm / lw.VMICRO_CHAR
+    qr = qNormRatio
+
     H_6_radyn = lambda: \
     AtomicModel(name="H",
     levels=[
@@ -53,16 +57,16 @@ def H_6():
         AtomicLevel(E=109754.578000, g=1.000000, label="H II continuum", stage=1, J=None, L=None, S=None),
     ],
     lines=[
-        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=15.000000, qWing=600.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=50, qCore=10.000000, qWing=250.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, NlambdaGen=20, qCore=3.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, NlambdaGen=20, qCore=3.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, NlambdaGen=70, qCore=3.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.701e+8, stark=0.0),
-        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, NlambdaGen=40, qCore=3.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.004e+08, stark=0.0),
-        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, NlambdaGen=40, qCore=3.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.818e+08, stark=0.0),
-        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, NlambdaGen=20, qCore=2.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.301e+08, stark=0.0),
-        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, NlambdaGen=20, qCore=2.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.115e+08, stark=0.000000),
-        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=20, qCore=1.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.177e+07, stark=0.000000),
+        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=20.000000, qWing=600.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
+        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=100, qCore=20.000000, qWing=250.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
+        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
+        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
+        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, NlambdaGen=100, qCore=20.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.701e+8, stark=0.0),
+        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.004e+08, stark=0.0),
+        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.818e+08, stark=0.0),
+        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.301e+08, stark=0.0),
+        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.115e+08, stark=0.000000),
+        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=40, qCore=5.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.177e+07, stark=0.000000),
         # NOTE(cmo): I don't believe RADYN does both linear and quadratic Stark broadening for H, so setting Stark to these numbers seems to make the lines overly wide
         # VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=15.000000, qWing=600.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
         # VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=50, qCore=10.000000, qWing=250.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
@@ -383,7 +387,7 @@ class Shull82(CollisionalRates):
     def compute_rates(self, atmos, nstar, Cmat):
         # NOTE(cmo): Summers direct recombination rates
         zz = self.jLevel.stage
-        rhoq = atmos.ne * Const.CM_TO_M**3 / zz**7
+        rhoq = (atmos.ne * Const.CM_TO_M**3) / zz**7
         x = (0.5 * zz + (self.col - 1)) * self.row / 3
         beta = -0.2 / np.log(x + np.e)
         
@@ -398,7 +402,7 @@ class Shull82(CollisionalRates):
         summers = 1.0 / (1.0 + rhoq / rho0)**0.14
 
         
-        cDown = self.aRad * (tg * 1e-4)**-self.xRad
+        cDown = self.aRad * (tg * 1e-4)**(-self.xRad)
         cDown += summers * self.aDi / tg / np.sqrt(tg) * np.exp(-self.t0 / tg) * (1.0 + self.bDi * np.exp(-self.t1 / tg))
 
         cUp = self.aCol * np.sqrt(tg) * np.exp(-self.tCol / tg) / (1.0 + 0.1 * tg / self.tCol)
@@ -425,11 +429,11 @@ def CaII():
         AtomicLevel(E=95751.870000, g=1.000000, label="CA III 3P6 1SE", stage=2, J=Fraction(0, 1), L=0, S=Fraction(0, 1)),
     ],
     lines=[
-        VoigtLine(j=3, i=0, f=3.16000e-01, type=LineType.PRD, NlambdaGen=50, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.62]), gRad=1.420000e+08, stark=5.458e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=0, f=6.37000e-01, type=LineType.PRD, NlambdaGen=50, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.61]), gRad=1.46e+08, stark=5.41e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=3, i=1, f=4.73e-02, type=LineType.CRD, NlambdaGen=40, qCore=4.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.04]), gRad=1.42e+08, stark=2.673e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=1, f=9.60e-3, type=LineType.CRD, NlambdaGen=40, qCore=4.000000, qWing=150.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=2, f=5.74e-02, type=LineType.CRD, NlambdaGen=80, qCore=4.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=3, i=0, f=3.16000e-01, type=LineType.PRD, NlambdaGen=80, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.62]), gRad=1.420000e+08, stark=5.458e-7*-Const.CM_TO_M**3),
+        VoigtLine(j=4, i=0, f=6.37000e-01, type=LineType.PRD, NlambdaGen=80, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.61]), gRad=1.46e+08, stark=5.41e-7*-Const.CM_TO_M**3),
+        VoigtLine(j=3, i=1, f=4.73e-02, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.04]), gRad=1.42e+08, stark=2.673e-7*-Const.CM_TO_M**3),
+        VoigtLine(j=4, i=1, f=9.60e-3, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=150.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=4, i=2, f=5.74e-02, type=LineType.CRD, NlambdaGen=100, qCore=10.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
     ],
     continua=[
         ExplicitContinuum(j=5, i=0, alphaGrid=[[103.7, 3.74e-25],

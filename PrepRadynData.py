@@ -18,9 +18,9 @@ cmassGrid = cmass[-1]
 # cmassGrid = cmass[0]
 # cmassGrid = np.interp(np.linspace(0, 1, 400), np.linspace(0, 1, cmass[0].shape[0]), cmass[0])
 
-NumPoints = 3000
+NumPoints = 1000
 ResolutionSplitPoint = 2e6
-LowerFraction = 0.85
+LowerFraction = 0.7
 LowerPoints = int(NumPoints * LowerFraction)
 UpperPoints = NumPoints - LowerPoints + 1
 

@@ -22,7 +22,7 @@ from contextlib import redirect_stdout
 import multiprocessing
 from pathlib import Path
 
-OutputDir = 'TimestepsRadynCeaFinal/'
+OutputDir = 'TimestepsHeightFinal/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -123,12 +123,13 @@ class MsLightweaverManager:
         self.increment_step()
 
     def cont_fn_data(self, step):
-        J = np.copy(self.ctx.spect.J)
+        self.load_timestep(step)
         self.ctx.depthData.fill = True
         dJ = 1.0
-        while dJ < 1e-3:
-            dJ = self.ctx.formal_sol()
+        while dJ > 1e-3:
+            dJ = self.ctx.formal_sol_gamma_matrices()
         self.ctx.depthData.fill = False
+        J = np.copy(self.ctx.spect.J)
 
         # NOTE(cmo): Don't want to do this for every depth
         sourceData = {'chi': np.copy(self.ctx.depthData.chi),

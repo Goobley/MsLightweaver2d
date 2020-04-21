@@ -154,11 +154,13 @@ class MsLightweaverAdvectorHeight:
     
     def vel(self, idx, timeStepAdvance=0.0):
         assert timeStepAdvance < 1.0
-        vel = interp1d(self.heightGrid[::-1], self.atmost['vz1'][idx, ::-1], 
-                       kind=1, fill_value=0.0, bounds_error=False)(self.heightCc)
+        # vel = interp1d(self.heightGrid[::-1], self.atmost['vz1'][idx, ::-1], 
+        #                kind=1, fill_value=0.0, bounds_error=False)(self.heightCc)
+        vel = np.copy(self.atmost['vz1'][idx, ::-1])
         if timeStepAdvance > 0.0:
-            vel2 = interp1d(self.heightGrid[::-1], self.atmost['vz1'][idx+1, ::-1], 
-                            kind=1, fill_value=0.0, bounds_error=False)(self.heightCc)
+            # vel2 = interp1d(self.heightGrid[::-1], self.atmost['vz1'][idx+1, ::-1], 
+            #                 kind=1, fill_value=0.0, bounds_error=False)(self.heightCc)
+            vel2 = np.copy(self.atmost['vz1'][idx, ::-1])
             # TODO(cmo): Maybe add some interpolation smoothing, like cosine
             cosFac = 0.5 * (1.0 - np.cos(timeStepAdvance * np.pi))
             vel *= (1.0 - cosFac)
