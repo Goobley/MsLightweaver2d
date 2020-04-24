@@ -12,7 +12,7 @@ from notify_run import Notify
 from MsLightweaverManager import MsLightweaverManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 
-OutputDir = 'TimestepsHeightWiderTest1000/'
+OutputDir = 'TimestepsHeightWiderAdv/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
