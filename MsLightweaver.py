@@ -36,7 +36,7 @@ ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
                           numInterfaces=NumInterfaces, atoms=FchromaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           doAdvection=DoAdvection, conserveCharge=ConserveCharge)
-ms.initial_stat_eq(popTol=1e-3)
+ms.initial_stat_eq(popTol=1e-3, nScatter=10)
 ms.save_timestep()
 
 if startingCtx is None:
@@ -55,7 +55,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=0.55)
+    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
     ms.ctx.clear_ng()
     ms.save_timestep()
     stepEnd = time.time()

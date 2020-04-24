@@ -105,7 +105,7 @@ class MsLightweaverManager:
                  atoms, activeAtoms=['H', 'Ca'],
                  startingCtx=None, doAdvection=False,
                  conserveCharge=False):
-        # check_write_git_revision(outputDir)
+        check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
         self.doAdvection = doAdvection
@@ -267,6 +267,8 @@ class MsLightweaverManager:
             delta = self.ctx.stat_equil()
             if self.conserveCharge:
                 self.ctx.nr_post_update()
+                for p in self.eqPops.atomicPops:
+                    p.nStar[:] = lw.lte_pops(p.model, self.atmos.temperature, self.atmos.ne, p.nTotal)
 
             if self.ctx.crswDone and dJ < JTol and delta < popTol:
                 print('Stat eq converged in %d iterations' % (i+1))
@@ -291,7 +293,7 @@ class MsLightweaverManager:
         height -= hTau1
 
     def advect_pops(self):
-        activePops = [np.copy(self.atmos.ne)]
+        activePops = [np.copy(self.atmos.ne[None, :])]
         popSizes = [1]
         for atom in self.aSet.activeAtoms:
             p = self.eqPops[atom.name]
@@ -300,7 +302,7 @@ class MsLightweaverManager:
             popSizes.append(p.shape[0])
         pops = np.concatenate(activePops, axis=0)
 
-        self.adv.fill_from_pops(self.atmos.cmass, pops, popSizes)
+        self.adv.fill_from_pops(pops, popSizes)
         self.adv.step()
 
         newPops = self.adv.pops()
@@ -393,9 +395,9 @@ class MsLightweaverManager:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
             if self.conserveCharge:
-                dNrPops = ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
+                dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
                 for p in self.eqPops.atomicPops:
-                    p.nStar[:] = lw.lte_pops(p.model, atmos.temperature, atmos.ne, p.nTotal)
+                    p.nStar[:] = lw.lte_pops(p.model, self.atmos.temperature, self.atmos.ne, p.nTotal)
 
             if sub > 1 and delta < popsTol and dJ < JTol and dNrPops < popsTol:
                 break
