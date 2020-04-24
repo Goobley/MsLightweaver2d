@@ -147,8 +147,10 @@ class MsLightweaverManager:
             self.spect = self.aSet.compute_wavelength_grid()
 
             self.mols = MolecularTable()
-            self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
-            # self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
+            if self.conserveCharge:
+                self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
+            else:
+                self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
 
             self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=12)
 
