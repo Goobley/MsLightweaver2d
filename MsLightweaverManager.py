@@ -148,7 +148,7 @@ class MsLightweaverManager:
 
             self.mols = MolecularTable()
             if self.conserveCharge:
-                self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
+                self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.atmos, self.mols)
             else:
                 self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
 
