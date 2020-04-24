@@ -9,8 +9,8 @@ import os
 import os.path as path
 import time
 from notify_run import Notify
-from MsLightweaverManager import MsLightweaverManager, optional_load_starting_context
-from MsLightweaverUtil import test_timesteps_in_dir
+from MsLightweaverManager import MsLightweaverManager
+from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 
 OutputDir = 'TimestepsHeightWiderTest1000/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
@@ -21,7 +21,8 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
-DoAdvection = False
+DoAdvection = True
+ConserveCharge = True
 
 test_timesteps_in_dir(OutputDir) 
 
@@ -34,7 +35,7 @@ start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
                           numInterfaces=NumInterfaces, atoms=FchromaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
-                          doAdvection=DoAdvection)
+                          doAdvection=DoAdvection, conserveCharge=ConserveCharge)
 ms.initial_stat_eq(popTol=1e-3)
 ms.save_timestep()
 
@@ -45,7 +46,6 @@ if startingCtx is None:
 maxSteps = ms.atmost['time'].shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost['bheat1'][0]
 firstStep = 0
-# firstStep = 7685
 if firstStep != 0:
     ms.load_timestep(firstStep)
     ms.ctx.spect.J[:] = 0.0

@@ -25,7 +25,7 @@ from scipy.linalg import solve
 from HydroWeno.Simulation import Grid
 from HydroWeno.BCs import zero_grad_bc
 from HydroWeno.Weno import reconstruct_weno_nm_z
-# from MsLightweaverAdvector import MsLightweaverAdvector
+from MsLightweaverAdvector import MsLightweaverAdvectorHeight
 from scipy.interpolate import interp1d
 
 # https://stackoverflow.com/a/21901260
@@ -103,11 +103,13 @@ class MsLightweaverManager:
 
     def __init__(self, atmost, outputDir, numInterfaces, 
                  atoms, activeAtoms=['H', 'Ca'],
-                 startingCtx=None, doAdvection=False):
-        check_write_git_revision(outputDir)
+                 startingCtx=None, doAdvection=False,
+                 conserveCharge=False):
+        # check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
         self.doAdvection = doAdvection
+        self.conserveCharge = conserveCharge
         self.at = get_global_atomic_table()
         self.idx = 0
         self.nHTot = atmost['d1'] / (self.at.weightPerH * Const.Amu)
@@ -148,38 +150,18 @@ class MsLightweaverManager:
             self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
             # self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.mols, self.atmos)
 
-            self.ctx = LwContext(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=12)
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=12)
 
         self.atmos.bHeat = np.ones_like(self.atmost['bheat1'][0]) * 1e-20
         self.atmos.hPops = self.eqPops['H']
         np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
 
         if self.doAdvection:
-            numPopRows = 0
+            numPopRows = 1 # ne
             for atom in self.aSet.activeAtoms:
                 numPopRows += self.eqPops[atom.name].shape[0]
 
-            try:
-                self.atmos.originalHeight
-            except AttributeError:
-                self.atmos.originalHeight = np.copy(self.atmos.height)
-            
-            # Expand grid slightly with linear extrapolation, so cmass interfaces are preserved better for interpolation back
-            staticHeightInterfaces = interp1d(np.linspace(0, 1, self.atmos.height.shape[0]),
-                                            self.atmos.originalHeight[::-1], 
-                                            fill_value='extrapolate')(np.linspace(-0.02,
-                                                                                    1.01, 
-                                                                                    numInterfaces))
-            self.staticGrid = Grid(staticHeightInterfaces, 4)
-            self.adv = MsLightweaverAdvector(self.staticGrid, self.atmos.originalHeight, 
-                                            self.atmos.cmass, self.atmost,
-                                            simple_advection_bcs(), numPopRows=numPopRows)
-            # Make height and density grid self-consistent with hydro. Slight offsets appear due to cell-centres vs interfaces
-            self.atmos.height[:] = self.adv.height_from_cmass(self.atmos.cmass)
-            newRho = self.adv.rho_from_cmass(self.atmos.cmass)
-            self.atmos.nHTot[:] = newRho / (self.at.weightPerH*Const.Amu)
-            self.eqPops.update_lte_atoms_Hmin_pops(self.atmos)
-            self.JPrev = np.copy(self.ctx.spect.J)
+            self.adv = MsLightweaverAdvectorHeight(self.atmost, simple_advection_bcs(), numPopRows=numPopRows)
 
         # NOTE(cmo): Set up background
         # self.opc = OpcFile('opctab_cmo_mslw.dat')
@@ -281,6 +263,8 @@ class MsLightweaverManager:
                 continue
 
             delta = self.ctx.stat_equil()
+            if self.conserveCharge:
+                self.ctx.nr_post_update()
 
             if self.ctx.crswDone and dJ < JTol and delta < popTol:
                 print('Stat eq converged in %d iterations' % (i+1))
@@ -305,8 +289,8 @@ class MsLightweaverManager:
         height -= hTau1
 
     def advect_pops(self):
-        activePops = []
-        popSizes = []
+        activePops = [np.copy(self.atmos.ne)]
+        popSizes = [1]
         for atom in self.aSet.activeAtoms:
             p = self.eqPops[atom.name]
             p = p / np.sum(p, axis=0)
@@ -317,14 +301,13 @@ class MsLightweaverManager:
         self.adv.fill_from_pops(self.atmos.cmass, pops, popSizes)
         self.adv.step()
 
-        newPops = self.adv.interp_to_cmass(self.atmos.cmass)
-        newHeight = self.adv.height_from_cmass(self.atmos.cmass)
-        newRho = self.adv.rho_from_cmass(self.atmos.cmass)
+        newPops = self.adv.pops()
+        newRho = self.adv.rho()
 
-        self.atmos.height[:] = newHeight
         self.atmos.nHTot[:] = newRho / (self.at.weightPerH*Const.Amu)
+        self.atmos.ne[:] = newPops[0]
 
-        takeFrom = 0
+        takeFrom = 1
         for atom in self.aSet.activeAtoms:
             atomPop = self.eqPops[atom.name]
             nLevels = atomPop.shape[0]
@@ -358,8 +341,9 @@ class MsLightweaverManager:
         self.idx += 1
         self.atmos.temperature[:] = self.atmost['tg1'][self.idx]
         self.atmos.vlos[:] = self.atmost['vz1'][self.idx]
-        self.atmos.ne[:] = self.atmost['ne1'][self.idx]
         # Now done with the advection
+        if not self.doAdvection or not self.conserveCharge:
+            self.atmos.ne[:] = self.atmost['ne1'][self.idx]
         if False and not self.doAdvection:
             self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost['bheat1'][self.idx]
@@ -395,6 +379,7 @@ class MsLightweaverManager:
 
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
         dt = self.atmost['dt'][self.idx+1]
+        dNrPops = 0.0
         # self.ctx.spect.J[:] = 0.0
 
         prevState = self.time_dep_prev_state()
@@ -405,8 +390,12 @@ class MsLightweaverManager:
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
+            if self.conserveCharge:
+                dNrPops = ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
+                for p in self.eqPops.atomicPops:
+                    p.nStar[:] = lw.lte_pops(p.model, atmos.temperature, atmos.ne, p.nTotal)
 
-            if sub > 1 and delta < popsTol and dJ < JTol:
+            if sub > 1 and delta < popsTol and dJ < JTol and dNrPops < popsTol:
                 break
         else:
             self.ctx.depthData.fill = True
@@ -482,12 +471,3 @@ def distill_pops(eqPops):
     for atom in eqPops.atomicPops:
         d[atom.name] = convert_atomic_pops(atom)
     return d
-
-def optional_load_starting_context(folder):
-    if path.isfile(folder + 'StartingContext.pickle'):
-        with open(folder + 'StartingContext.pickle', 'rb') as pkl:
-            result = pickle.load(pkl)
-    else:
-        result = None
-
-    return result

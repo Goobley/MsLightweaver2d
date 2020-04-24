@@ -134,11 +134,15 @@ class MsLightweaverAdvectorHeight:
             
         start = 2
         for p in popDims:
+            if p == 1:
+                start += p
+                continue
+
             data[start:start+p, :] /= np.sum(data[start:start+p, :], axis=0)
             start += p
 
     def pops(self):
-        pops = np.zeros((self.data.shape[0]-2, cmassGrid.shape[0]))
+        pops = np.zeros((self.data.shape[0]-2, self.heightGrid.shape[0]))
         data = self.data[:, self.grid.griBeg:self.grid.griEnd]
         for i in range(pops.shape[0]):
             pops[i] = interp1d(self.heightCc, data[i+2], 
