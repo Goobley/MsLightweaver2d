@@ -12,7 +12,7 @@ from notify_run import Notify
 from MsLightweaverManager import MsLightweaverManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 
-OutputDir = 'TimestepsHeightWiderAdv/'
+OutputDir = 'TimestepsGrahamHeight/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -33,7 +33,7 @@ startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
-                          numInterfaces=NumInterfaces, atoms=FchromaAtoms, 
+                          numInterfaces=NumInterfaces, atoms=NasaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           doAdvection=DoAdvection, conserveCharge=ConserveCharge)
 ms.initial_stat_eq(popTol=1e-3, nScatter=10)

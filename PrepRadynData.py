@@ -28,7 +28,8 @@ height = np.copy(np.concatenate([
             np.linspace(atmost.z1[0, -1], ResolutionSplitPoint, LowerPoints),
             np.linspace(ResolutionSplitPoint, atmost.z1[0, 0], UpperPoints)[1:]
                                 ])[::-1])
-height = interp1d(np.linspace(0, 1, 300), atmost.z1[0])(np.linspace(0, 1, NumPoints))
+Nspace = radyn.z1.shape[1]
+height = interp1d(np.linspace(0, 1, Nspace), atmost.z1[0])(np.linspace(0, 1, NumPoints))
 # height = atmost.z1[0]
 
 HeightGrid = True
