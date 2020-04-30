@@ -17,7 +17,6 @@ OutputDir = 'TimestepsRadynZ/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
-NumInterfaces = 1024
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
@@ -28,12 +27,14 @@ test_timesteps_in_dir(OutputDir)
 
 atmost = read_atmost('atmost.dat')
 atmost.to_SI()
+if atmost.bheat1.shape[0] == 0:
+    atmost.bheat1 = np.load('BheatInterp.npy')
 
 startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
-                          atoms=FchromaAtoms, 
+                          atoms=NasaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           conserveCharge=ConserveCharge)
 ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
