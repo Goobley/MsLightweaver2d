@@ -25,7 +25,6 @@ from scipy.linalg import solve
 from HydroWeno.Simulation import Grid
 from HydroWeno.BCs import zero_grad_bc
 from HydroWeno.Weno import reconstruct_weno_nm_z
-from MsLightweaverAdvector import MsLightweaverAdvectorHeight
 from scipy.interpolate import interp1d
 
 # https://stackoverflow.com/a/21901260
@@ -101,19 +100,16 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
 
 class MsLightweaverManager:
 
-    def __init__(self, atmost, outputDir, numInterfaces, 
+    def __init__(self, atmost, outputDir, 
                  atoms, activeAtoms=['H', 'Ca'],
-                 startingCtx=None, doAdvection=False,
-                 conserveCharge=False):
+                 startingCtx=None, conserveCharge=False):
         check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
-        self.doAdvection = doAdvection
         self.conserveCharge = conserveCharge
         self.at = get_global_atomic_table()
         self.idx = 0
-        self.nHTot = atmost['d1'] / (self.at.weightPerH * Const.Amu)
-        self.numInterfaces = numInterfaces
+        self.nHTot = atmost.d1 / (self.at.weightPerH * Const.Amu)
 
         if startingCtx is not None:
             self.ctx = startingCtx
@@ -123,16 +119,8 @@ class MsLightweaverManager:
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
         else:
-            cmassGrid = 'cmassGrid' in atmost
-
-            if self.doAdvection and cmassGrid:
-                raise ValueError('Currenttly not supporting cmassGrid and advection')
-
-            nHTot = atmost['d1'][0] / (self.at.weightPerH * Const.Amu)
-            if cmassGrid:
-                self.atmos = Atmosphere(scale=ScaleType.ColumnMass, depthScale=np.copy(atmost['cmassGrid']), temperature=np.copy(atmost['tg1'][0]), vlos=np.copy(atmost['vz1'][0]), vturb=np.copy(atmost['vturb']), ne=np.copy(atmost['ne1'][0]), nHTot=nHTot)
-            else:
-                self.atmos = Atmosphere(scale=ScaleType.Geometric, depthScale=np.copy(atmost['zGrid']), temperature=np.copy(atmost['tg1'][0]), vlos=np.copy(atmost['vz1'][0]), vturb=np.copy(atmost['vturb']), ne=np.copy(atmost['ne1'][0]), nHTot=nHTot)
+            nHTot = self.nHTot[0]
+            self.atmos = Atmosphere(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
 
             self.atmos.convert_scales()
             self.atmos.quadrature(5)
@@ -154,16 +142,9 @@ class MsLightweaverManager:
 
             self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=12)
 
-        self.atmos.bHeat = np.ones_like(self.atmost['bheat1'][0]) * 1e-20
+        self.atmos.bHeat = np.ones_like(self.atmost.bheat1[0]) * 1e-20
         self.atmos.hPops = self.eqPops['H']
         np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
-
-        if self.doAdvection:
-            numPopRows = 1 # ne
-            for atom in self.aSet.activeAtoms:
-                numPopRows += self.eqPops[atom.name].shape[0]
-
-            self.adv = MsLightweaverAdvectorHeight(self.atmost, simple_advection_bcs(), numPopRows=numPopRows)
 
         # NOTE(cmo): Set up background
         # self.opc = OpcFile('opctab_cmo_mslw.dat')
@@ -258,10 +239,10 @@ class MsLightweaverManager:
             self.ctx.background.chi[idxs, :] = chi
             self.ctx.background.sca[idxs, :] = sca
 
-    def initial_stat_eq(self, nScatter=3, nMaxIter=1000, popTol=1e-3, JTol=3e-3):
-        for i in range(nMaxIter):
+    def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3):
+        for i in range(NmaxIter):
             dJ = self.ctx.formal_sol_gamma_matrices()
-            if i < nScatter:
+            if i < Nscatter:
                 continue
 
             delta = self.ctx.stat_equil()
@@ -276,56 +257,22 @@ class MsLightweaverManager:
         else:
             raise ConvergenceError('Stat Eq did not converge.')
 
-    def update_height(self):
-        if self.atmos.scale == lw.ScaleType.Geometric:
-            return
-
-        height = self.atmos.height
-        cmass = self.atmos.cmass
-        rhoSI = self.atmost['d1'][self.idx]
-        height[0] = 0.0
-        for k in range(1, cmass.shape[0]):
-            height[k] = height[k-1] - 2.0 * (cmass[k] - cmass[k-1]) / (rhoSI[k-1] + rhoSI[k])
-
-        # NOTE(cmo): ish.
-        # NOTE(cmo): What I mean by ish, is this assumes that tau500 doesn't change, which it clearly does, but we never refer to tau500 in the computation or save it, so it currently doesn't matter.
-        hTau1 = np.interp(1.0, self.atmos.tau_ref, height)
-        height -= hTau1
-
     def advect_pops(self):
-        activePops = [np.copy(self.atmos.ne[None, :])]
-        popSizes = [1]
+        adv = self.atmost.d1[self.idx+1] / self.atmost.d1[self.idx]
+        neAdv = self.atmos.ne * adv
+        self.atmos.ne[:] = neAdv
         for atom in self.aSet.activeAtoms:
             p = self.eqPops[atom.name]
-            p = p / np.sum(p, axis=0)
-            activePops.append(p)
-            popSizes.append(p.shape[0])
-        pops = np.concatenate(activePops, axis=0)
-
-        self.adv.fill_from_pops(pops, popSizes)
-        self.adv.step()
-
-        newPops = self.adv.pops()
-        newRho = self.adv.rho()
-
-        self.atmos.nHTot[:] = newRho / (self.at.weightPerH*Const.Amu)
-        self.atmos.ne[:] = newPops[0]
-
-        takeFrom = 1
-        for atom in self.aSet.activeAtoms:
-            atomPop = self.eqPops[atom.name]
-            nLevels = atomPop.shape[0]
-            p = newPops[takeFrom:takeFrom+nLevels, :]
-            p = p / np.sum(p, axis=0)
-            atomPop[:] = p * self.atmos.nHTot * self.at[atom.name].abundance
-            takeFrom += nLevels
+            for i in range(p.shape[0]):
+                pAdv = p[i] * adv
+                p[i, :] = pAdv
 
     def save_timestep(self):
         i = self.idx
         with open(self.outputDir + 'Step_%.6d.pickle' % i, 'wb') as pkl:
             eqPops = distill_pops(self.eqPops)
             Iwave = self.ctx.spect.I
-            pickle.dump({'eqPops': eqPops, 'Iwave': Iwave}, pkl)
+            pickle.dump({'eqPops': eqPops, 'Iwave': Iwave, 'ne': self.atmos.ne}, pkl)
 
     def load_timestep(self, stepNum):
         with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
@@ -340,23 +287,17 @@ class MsLightweaverManager:
         self.increment_step()
 
     def increment_step(self):
-        if self.doAdvection:
-            self.advect_pops()
+        self.advect_pops()
         self.idx += 1
-        self.atmos.temperature[:] = self.atmost['tg1'][self.idx]
-        self.atmos.vlos[:] = self.atmost['vz1'][self.idx]
-        # Now done with the advection
-        if not self.doAdvection or not self.conserveCharge:
-            self.atmos.ne[:] = self.atmost['ne1'][self.idx]
-        if False and not self.doAdvection:
-            self.atmos.nHTot[:] = self.nHTot[self.idx]
-        self.atmos.bHeat[:] = self.atmost['bheat1'][self.idx]
+        self.atmos.temperature[:] = self.atmost.tg1[self.idx]
+        self.atmos.vlos[:] = self.atmost.vz1[self.idx]
+        if not self.conserveCharge:
+            self.atmos.ne[:] = self.atmost.ne1[self.idx]
 
-        # self.atmos.convert_scales()
-        # NOTE(cmo): Convert scales is slow due to recomputing the tau500 opacity (pure python EOS), we only really need the height at the moment. So let's just do that quickly here.
-        if not self.doAdvection:
-            self.update_height()
-        # NOTE(cmo): Yes, for now this is also recomputing the background... it'll be fine though
+        self.atmos.nHTot[:] = self.nHTot[self.idx]
+        self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
+
+        self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
         # self.opac_background()
 
@@ -382,7 +323,7 @@ class MsLightweaverManager:
         return maxDelta
 
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
-        dt = self.atmost['dt'][self.idx+1]
+        dt = self.atmost.dt[self.idx+1]
         dNrPops = 0.0
         # self.ctx.spect.J[:] = 0.0
 
