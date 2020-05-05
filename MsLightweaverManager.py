@@ -22,9 +22,6 @@ from radynpy.utils import hydrogen_absorption
 from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
-from HydroWeno.Simulation import Grid
-from HydroWeno.BCs import zero_grad_bc
-from HydroWeno.Weno import reconstruct_weno_nm_z
 from scipy.interpolate import interp1d
 
 # https://stackoverflow.com/a/21901260
@@ -64,16 +61,6 @@ def find_subarray(a, b):
 
     raise ValueError
 
-
-def simple_advection_bcs():
-    lower_bc = zero_grad_bc('Lower')
-    upper_bc = zero_grad_bc('Upper')
-    def apply_bcs(grid, V):
-        lower_bc(grid, V)
-        upper_bc(grid, V)
-
-    return apply_bcs
-
 @njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     Nlevel = n.shape[0]
@@ -102,7 +89,8 @@ class MsLightweaverManager:
 
     def __init__(self, atmost, outputDir, 
                  atoms, activeAtoms=['H', 'Ca'],
-                 startingCtx=None, conserveCharge=False):
+                 startingCtx=None, conserveCharge=False,
+                 populationTransportMode='Advect'):
         check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
@@ -110,6 +98,17 @@ class MsLightweaverManager:
         self.at = get_global_atomic_table()
         self.idx = 0
         self.nHTot = atmost.d1 / (self.at.weightPerH * Const.Amu)
+        if populationTransportMode == 'Advect':
+            self.advectPops = True
+            self.rescalePops = False
+        elif populationTransportMode == 'Rescale':
+            self.advectPops = False
+            self.rescalePops = True
+        elif populationTransportMode is None or populationTransportMode == 'None':
+            self.advectPops = False
+            self.rescalePops = False
+        else:
+            raise ValueError('Unknown populationTransportMode: %s' % populationTransportMode)
 
         if startingCtx is not None:
             self.ctx = startingCtx
@@ -140,7 +139,7 @@ class MsLightweaverManager:
             else:
                 self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
 
-            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=False, Nthreads=12)
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=12)
 
         self.atmos.bHeat = np.ones_like(self.atmost.bheat1[0]) * 1e-20
         self.atmos.hPops = self.eqPops['H']
@@ -246,10 +245,6 @@ class MsLightweaverManager:
                 continue
 
             delta = self.ctx.stat_equil()
-            if self.conserveCharge:
-                self.ctx.nr_post_update()
-                for p in self.eqPops.atomicPops:
-                    p.nStar[:] = lw.lte_pops(p.model, self.atmos.temperature, self.atmos.ne, p.nTotal)
 
             if self.ctx.crswDone and dJ < JTol and delta < popTol:
                 print('Stat eq converged in %d iterations' % (i+1))
@@ -258,14 +253,43 @@ class MsLightweaverManager:
             raise ConvergenceError('Stat Eq did not converge.')
 
     def advect_pops(self):
-        adv = self.atmost.d1[self.idx+1] / self.atmost.d1[self.idx]
-        neAdv = self.atmos.ne * adv
-        self.atmos.ne[:] = neAdv
-        for atom in self.aSet.activeAtoms:
-            p = self.eqPops[atom.name]
-            for i in range(p.shape[0]):
-                pAdv = p[i] * adv
-                p[i, :] = pAdv
+        if self.rescalePops:
+            adv = self.atmost.d1[self.idx+1] / self.atmost.d1[self.idx]
+            neAdv = self.atmos.ne * adv
+            self.atmos.ne[:] = neAdv
+            for atom in self.aSet.activeAtoms:
+                p = self.eqPops[atom.name]
+                for i in range(p.shape[0]):
+                    pAdv = p[i] * adv
+                    p[i, :] = pAdv
+        elif self.advectPops:
+            z0 = self.atmost.z1[self.idx]
+            z1 = self.atmost.z1[self.idx+1]
+            d0 = self.atmost.d1[self.idx]
+            d1 = self.atmost.d1[self.idx+1]
+            vz0 = self.atmost.vz1[self.idx]
+            vz1 = self.atmost.vz1[self.idx+1]
+            dt = self.atmost.dt[self.idx+1]
+
+            z0m = z0 + 0.5 * vz0 * dt
+            z0Tracer = z0 + interp1d(z1, vz1, kind=3, fill_value='extrapolate')(z0m) * dt
+
+            densityAdv = d1 / d0 
+            for atom in self.aSet.activeAtoms:
+                p = self.eqPops[atom.name]
+                for i in range(p.shape[0]):
+                    p0 = p[i, :]
+                    p[i, :] = 10**(interp1d(z0Tracer, np.log10(p0), kind=3, fill_value='extrapolate')(z1))
+                nTotal = self.eqPops.atomicPops[atom.name].nTotal
+                nTotalAdv = nTotal * densityAdv
+                p *= nTotalAdv / p.sum(axis=0)
+
+            # NOTE(cmo): Guess advected n_e. Will be corrected to be self
+            # consistent later (in update_deps if conserveCharge=True). If
+            # conserveCharge isn't true then we're using loaded n_e anyway
+            neAdv = interp1d(z0Tracer, self.atmos.ne, kind=3, fill_value='extrapolate')(z1)
+            self.atmos.ne[:] = neAdv
+
 
     def save_timestep(self):
         i = self.idx
@@ -294,7 +318,8 @@ class MsLightweaverManager:
         if not self.conserveCharge:
             self.atmos.ne[:] = self.atmost.ne1[self.idx]
 
-        self.atmos.nHTot[:] = self.nHTot[self.idx]
+        if self.advectPops or self.rescalePops:
+            self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
         self.atmos.height[:] = self.atmost.z1[self.idx]
@@ -337,8 +362,6 @@ class MsLightweaverManager:
             delta = self.time_dep_update(dt, prevState, theta=theta)
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
-                for p in self.eqPops.atomicPops:
-                    p.nStar[:] = lw.lte_pops(p.model, self.atmos.temperature, self.atmos.ne, p.nTotal)
 
             if sub > 1 and delta < popsTol and dJ < JTol and dNrPops < popsTol:
                 break

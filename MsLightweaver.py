@@ -12,8 +12,10 @@ from notify_run import Notify
 from MsLightweaverManager import MsLightweaverManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 from ReadAtmost import read_atmost
+from threadpoolctl import threadpool_limits
+threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZ/'
+OutputDir = 'TimestepsRadynZAdv/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -22,6 +24,7 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_
 FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
 ConserveCharge = True
+PopulationTransportMode = 'Advect'
 
 test_timesteps_in_dir(OutputDir) 
 
@@ -34,9 +37,10 @@ startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
-                          atoms=NasaAtoms, 
+                          atoms=FchromaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
-                          conserveCharge=ConserveCharge)
+                          conserveCharge=ConserveCharge, 
+                          populationTransportMode=PopulationTransportMode)
 ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
 ms.save_timestep()
 
