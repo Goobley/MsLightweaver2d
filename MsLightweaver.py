@@ -37,7 +37,7 @@ startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
-                          atoms=FchromaAtoms, 
+                          atoms=NasaAtoms, 
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           conserveCharge=ConserveCharge, 
                           populationTransportMode=PopulationTransportMode)
