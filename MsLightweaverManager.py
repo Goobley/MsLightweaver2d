@@ -287,8 +287,8 @@ class MsLightweaverManager:
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
             # consistent later (in update_deps if conserveCharge=True). If
             # conserveCharge isn't true then we're using loaded n_e anyway
-            neAdv = interp1d(z0Tracer, self.atmos.ne, kind=3, fill_value='extrapolate')(z1)
-            self.atmos.ne[:] = neAdv
+            neAdv = interp1d(z0Tracer, np.log10(self.atmos.ne), kind=3, fill_value='extrapolate')(z1)
+            self.atmos.ne[:] = 10**neAdv
 
 
     def save_timestep(self):
@@ -302,13 +302,14 @@ class MsLightweaverManager:
         with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
             step = pickle.load(pkl)
 
+        self.idx = stepNum - 1
+        self.increment_step()
+
         for name, pops in step['eqPops'].items():
             if pops['n'] is not None:
                 self.eqPops.atomicPops[name].pops[:] = pops['n']
             self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
-
-        self.idx = stepNum - 1
-        self.increment_step()
+        self.atmos.ne[:] = step['ne']
 
     def increment_step(self):
         self.advect_pops()
@@ -323,6 +324,7 @@ class MsLightweaverManager:
         self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
         self.atmos.height[:] = self.atmost.z1[self.idx]
+        print(self.atmos.ne)
         self.ctx.update_deps()
         # self.opac_background()
 
@@ -360,10 +362,13 @@ class MsLightweaverManager:
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
+            # if delta > 1e-1:
+            #     continue
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
 
-            if sub > 1 and delta < popsTol and dJ < JTol and dNrPops < popsTol:
+            if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol) 
+                            or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)):
                 break
         else:
             self.ctx.depthData.fill = True
@@ -382,6 +387,8 @@ class MsLightweaverManager:
 
             with open(self.outputDir + 'NonConvergenceData_%.6d.pickle' % (self.idx), 'wb') as pkl:
                 pickle.dump(sourceData, pkl)
+
+            print('NON-CONVERGED')
         # self.ctx.time_dep_conserve_charge(prevState)
 
     def cont_fn_data(self, step):

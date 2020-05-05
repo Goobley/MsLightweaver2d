@@ -44,9 +44,10 @@ ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
 ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
 ms.save_timestep()
 
-if startingCtx is None:
-    with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
-        pickle.dump(ms.ctx, pkl)
+# NOTE(cmo): Due to monkey-patching we can't reload the context currently
+# if startingCtx is None:
+#     with open(OutputDir + 'StartingContext.pickle', 'wb') as pkl:
+#         pickle.dump(ms.ctx, pkl)
 
 maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost.bheat1[0]
