@@ -15,7 +15,7 @@ from ReadAtmost import read_atmost
 from threadpoolctl import threadpool_limits
 threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZAdv/'
+OutputDir = 'TimestepsRadynZAdv2/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)

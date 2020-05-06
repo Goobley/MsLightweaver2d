@@ -287,8 +287,8 @@ class MsLightweaverManager:
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
             # consistent later (in update_deps if conserveCharge=True). If
             # conserveCharge isn't true then we're using loaded n_e anyway
-            neAdv = interp1d(z0Tracer, np.log10(self.atmos.ne), kind=3, fill_value='extrapolate')(z1)
-            self.atmos.ne[:] = 10**neAdv
+            # neAdv = interp1d(z0Tracer, np.log10(self.atmos.ne), kind=3, fill_value='extrapolate')(z1)
+            # self.atmos.ne[:] = 10**neAdv
 
 
     def save_timestep(self):
@@ -324,7 +324,6 @@ class MsLightweaverManager:
         self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
         self.atmos.height[:] = self.atmost.z1[self.idx]
-        print(self.atmos.ne)
         self.ctx.update_deps()
         # self.opac_background()
 
@@ -352,6 +351,7 @@ class MsLightweaverManager:
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
         dt = self.atmost.dt[self.idx+1]
         dNrPops = 0.0
+        underTol = False
         # self.ctx.spect.J[:] = 0.0
 
         prevState = self.time_dep_prev_state()
@@ -362,8 +362,11 @@ class MsLightweaverManager:
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
-            # if delta > 1e-1:
-            #     continue
+            if delta > 5e-1:
+                continue
+            if not underTol:
+                underTol = True
+                self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
 
