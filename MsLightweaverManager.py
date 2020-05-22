@@ -22,7 +22,24 @@ from radynpy.utils import hydrogen_absorption
 from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, PchipInterpolator
+from HydroWeno.Simulation import Grid
+from HydroWeno.Advector import Advector
+from HydroWeno.BCs import zero_grad_bc
+from HydroWeno.Weno import reconstruct_weno_nm_z
+import warnings
+from traceback import print_stack
+from weno4 import weno4
+
+def weno4_safe(xs, xp, fp, **kwargs):
+    xsort = np.argsort(xp)
+    xps = xp[xsort]
+    fps = fp[xsort]
+    return weno4(xs, xps, fps, **kwargs)
+
+def weno4_pos(xs, xp, fp, **kwargs):
+    return np.exp(weno4_safe(xs, xp, np.log(fp), **kwargs))
+
 
 # https://stackoverflow.com/a/21901260
 import subprocess
@@ -62,6 +79,153 @@ def find_subarray(a, b):
     raise ValueError
 
 @njit
+def construct_common_grid(z0, z1, GridTol=10):
+    ClosestPointTol = max(min(np.min(np.abs(np.diff(z0))), np.min(np.abs(np.diff(z1)))), GridTol)
+    zComplete = np.concatenate((z0, z1))
+    zComplete.sort()
+    z = np.zeros_like(zComplete)
+    z[0] = zComplete[0]
+    mark = 0
+    point = 0
+    Nspace = 1
+    while point < zComplete.shape[0]:
+        if zComplete[point] - z[mark] >= ClosestPointTol:
+            z[Nspace] = zComplete[point]
+            Nspace += 1
+            mark += 1
+
+        point += 1
+
+    return z[:Nspace]
+
+
+def centres_to_interfaces(z):
+    return np.concatenate((
+        [z[0] - 0.5 * (z[1] - z[0])],
+        0.5 * (z[1:] + z[:-1]),
+        [z[-1] + 0.5 * (z[-1] - z[-2])]))
+
+def cfl(grid, data):
+    vel = np.abs(data[0])
+    dt = 0.8 * np.min(grid.dx / vel)
+    return dt
+
+def simple_advection_bcs():
+    lower_bc = zero_grad_bc('Lower')
+    upper_bc = zero_grad_bc('Upper')
+    def apply_bcs(grid, V):
+        lower_bc(grid, V)
+        upper_bc(grid, V)
+
+    return apply_bcs
+
+def advect(atmost, tIdx, eqPops, activeAtomNames, atomicTable, refinementLevel=0):
+    NumSubSteps = 5000
+    Theta = 0.55
+    Refinement = [5, 0.5, 0.05]
+    GridTol = Refinement[refinementLevel]
+    z0 = atmost.z1[tIdx]
+    z1 = atmost.z1[tIdx+1]
+    d0 = atmost.d1[tIdx]
+    d1 = atmost.d1[tIdx+1]
+    numPopRows = 0
+    popShapes = []
+    for a in activeAtomNames:
+        numPopRows += eqPops[a].shape[0]
+        popShapes.append(eqPops[a].shape[0])
+
+    dtRadyn = atmost.dt[tIdx+1]
+    # zCc = construct_common_grid(z0, z1, GridTol=GridTol)
+    zCc = construct_common_grid(z0, z0, GridTol=GridTol)
+    zInterfaces = centres_to_interfaces(zCc)
+    grid = Grid(zInterfaces, numGhost=4)
+    data = np.zeros((1 + numPopRows, grid.griMax))
+    def interp(xNew, x, y, **kwargs):
+        # return interp1d(x, y, **kwargs, kind=3)(xNew)
+        # with warnings.catch_warnings(record=True) as w:
+        result = np.exp(interp1d(x, np.log(y), **kwargs, kind=3)(xNew))
+            # if len(w) > 0:
+            #     print(y)
+            #     print_stack()
+        return result
+
+
+    start = 1
+    for i, a in enumerate(activeAtomNames):
+        # data[start:start+popShapes[i], :] = 10**(interp1d(z0, np.log10(eqPops[a]), fill_value='extrapolate')(grid.cc))
+        for j in range(popShapes[i]):
+            # data[start+j, :] = interp(grid.cc, z0, eqPops[a][j, :], fill_value='extrapolate')
+            # data[start+j, :] = np.exp(PchipInterpolator(z0[::-1], np.log(eqPops[a][j, ::-1]), extrapolate=True)(grid.cc))
+            data[start+j, :] = weno4_safe(grid.cc, z0, eqPops[a][j], extrapolate=True)
+        # data[start:start+popShapes[i]] /= data[start:start+popShapes[i]].sum(axis=0)
+        start += popShapes[i]
+
+    ad = Advector(grid, data, simple_advection_bcs(), reconstruct_weno_nm_z)
+
+    def vel(timestepAdvance=0.0):
+        # vz = interp1d(atmost.z1[tIdx], atmost.vz1[tIdx], fill_value='extrapolate')(zCc)
+        vz = weno4_safe(zCc, atmost.z1[tIdx], atmost.vz1[tIdx], extrapolate=True)
+        if timestepAdvance > 0.0:
+            # vz1 = interp1d(atmost.z1[tIdx+1], atmost.vz1[tIdx+1], fill_value='extrapolate')(zCc)
+            vz1 = weno4_safe(zCc, atmost.z1[tIdx+1], atmost.vz1[tIdx+1], extrapolate=True)
+            cosFac = timestepAdvance
+            vz *= (1.0 - cosFac)
+            vz += vz1 * cosFac
+        return vz
+    # print('pre', data[1])
+
+    data[0, grid.griBeg:grid.griEnd] = vel()
+    dtMax = cfl(grid, data)
+    if dtRadyn > dtMax:
+        subTime = 0.0
+        for i in range(NumSubSteps):
+            dt = dtMax
+            if subTime + dt > dtRadyn:
+                dt = dtRadyn - subTime
+
+            def update_vel(dt):
+                advFrac = (subTime + dt) / dtRadyn
+                ad.data[0, grid.griBeg:grid.griEnd] = vel(advFrac)
+
+            ad.step(dt, update_vel=None)
+
+            subTime += dt
+            if subTime >= dtRadyn:
+                break
+            dtMax = cfl(grid, data)
+        else:
+            raise Exception('Convergence')
+    else:
+        ad.step(dtRadyn)
+    data = ad.data
+    if np.any(data[1:] < 0):
+        if refinementLevel < len(Refinement) - 1:
+            print('Advection failed: trying refinement level %d' % (refinementLevel+1))
+            return advect(atmost, tIdx, eqPops, activeAtomNames, atomicTable, refinementLevel=refinementLevel+1)
+        else:
+            print('Failed at %s' % (repr(np.where(data[1:] < 0))))
+            raise ValueError('Advection Failed')
+    # print('post', data[1])
+
+    densityAdv = d1 / d0
+    start = 1
+    for i, a in enumerate(activeAtomNames):
+        p = eqPops.atomicPops[a].pops
+        # p[:] = 10**(interp1d(grid.cc, np.log10(data[start:start+popShapes[i]]))(z1))
+        for j in range(popShapes[i]):
+            # p[j, :] = interp(z1, grid.cc, data[start+j])
+            # p[j, :] = np.exp(PchipInterpolator(grid.cc, np.log(data[start+j]))(z1))
+            p[j, :] = weno4_safe(z1, grid.cc, data[start+j])
+        start += popShapes[i]
+        nTotal = d1 / (atomicTable.weightPerH * lw.Amu) * atomicTable[a].abundance
+        p *= nTotal / p.sum(axis=0)
+        # for k in range(p.shape[1]):
+        #     maxPop = np.argmax(p[:, k])
+        #     p[maxPop, k] = 0.0
+        #     p[maxPop, k] = nTotal[k] - np.sum(p[:, k])
+
+
+@njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     Nlevel = n.shape[0]
     Nspace = n.shape[1]
@@ -87,17 +251,19 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
 
 class MsLightweaverManager:
 
-    def __init__(self, atmost, outputDir, 
+    def __init__(self, atmost, outputDir,
                  atoms, activeAtoms=['H', 'Ca'],
                  startingCtx=None, conserveCharge=False,
-                 populationTransportMode='Advect'):
-        check_write_git_revision(outputDir)
+                 populationTransportMode='Advect',
+                 prd=False):
+        # check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
         self.conserveCharge = conserveCharge
         self.at = get_global_atomic_table()
         self.idx = 0
         self.nHTot = atmost.d1 / (self.at.weightPerH * Const.Amu)
+        self.prd = prd
         if populationTransportMode == 'Advect':
             self.advectPops = True
             self.rescalePops = False
@@ -239,12 +405,17 @@ class MsLightweaverManager:
             self.ctx.background.sca[idxs, :] = sca
 
     def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3):
+        if self.prd:
+            self.ctx.configure_hprd_coeffs()
+
         for i in range(NmaxIter):
             dJ = self.ctx.formal_sol_gamma_matrices()
             if i < Nscatter:
                 continue
 
             delta = self.ctx.stat_equil()
+            if self.prd:
+                self.ctx.prd_redistribute()
 
             if self.ctx.crswDone and dJ < JTol and delta < popTol:
                 print('Stat eq converged in %d iterations' % (i+1))
@@ -263,26 +434,28 @@ class MsLightweaverManager:
                     pAdv = p[i] * adv
                     p[i, :] = pAdv
         elif self.advectPops:
-            z0 = self.atmost.z1[self.idx]
-            z1 = self.atmost.z1[self.idx+1]
-            d0 = self.atmost.d1[self.idx]
-            d1 = self.atmost.d1[self.idx+1]
-            vz0 = self.atmost.vz1[self.idx]
-            vz1 = self.atmost.vz1[self.idx+1]
-            dt = self.atmost.dt[self.idx+1]
+            # z0 = self.atmost.z1[self.idx]
+            # z1 = self.atmost.z1[self.idx+1]
+            # d0 = self.atmost.d1[self.idx]
+            # d1 = self.atmost.d1[self.idx+1]
+            # vz0 = self.atmost.vz1[self.idx]
+            # vz1 = self.atmost.vz1[self.idx+1]
+            # dt = self.atmost.dt[self.idx+1]
 
-            z0m = z0 + 0.5 * vz0 * dt
-            z0Tracer = z0 + interp1d(z1, vz1, kind=3, fill_value='extrapolate')(z0m) * dt
+            # z0m = z0 + 0.5 * vz0 * dt
+            # z0Tracer = z0 + interp1d(z1, vz1, kind=3, fill_value='extrapolate')(z0m) * dt
 
-            densityAdv = d1 / d0 
-            for atom in self.aSet.activeAtoms:
-                p = self.eqPops[atom.name]
-                for i in range(p.shape[0]):
-                    p0 = p[i, :]
-                    p[i, :] = 10**(interp1d(z0Tracer, np.log10(p0), kind=3, fill_value='extrapolate')(z1))
-                nTotal = self.eqPops.atomicPops[atom.name].nTotal
-                nTotalAdv = nTotal * densityAdv
-                p *= nTotalAdv / p.sum(axis=0)
+            # densityAdv = d1 / d0
+            # for atom in self.aSet.activeAtoms:
+            #     p = self.eqPops[atom.name]
+            #     for i in range(p.shape[0]):
+            #         p0 = p[i, :]
+            #         p[i, :] = 10**(interp1d(z0Tracer, np.log10(p0), kind=3, fill_value='extrapolate')(z1))
+            #     nTotal = self.eqPops.atomicPops[atom.name].nTotal
+            #     nTotalAdv = nTotal * densityAdv
+            #     p *= nTotalAdv / p.sum(axis=0)
+
+            advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
 
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
             # consistent later (in update_deps if conserveCharge=True). If
@@ -302,14 +475,24 @@ class MsLightweaverManager:
         with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
             step = pickle.load(pkl)
 
-        self.idx = stepNum - 1
-        self.increment_step()
+        self.idx = stepNum
+        self.atmos.temperature[:] = self.atmost.tg1[self.idx]
+        self.atmos.vlos[:] = self.atmost.vz1[self.idx]
+        if not self.conserveCharge:
+            self.atmos.ne[:] = self.atmost.ne1[self.idx]
+
+        if self.advectPops or self.rescalePops:
+            self.atmos.nHTot[:] = self.nHTot[self.idx]
+        self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
+
+        self.atmos.height[:] = self.atmost.z1[self.idx]
 
         for name, pops in step['eqPops'].items():
             if pops['n'] is not None:
                 self.eqPops.atomicPops[name].pops[:] = pops['n']
             self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
         self.atmos.ne[:] = step['ne']
+        self.ctx.update_deps()
 
     def increment_step(self):
         self.advect_pops()
@@ -325,6 +508,8 @@ class MsLightweaverManager:
 
         self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
+        if self.prd:
+            self.ctx.configure_hprd_coeffs()
         # self.opac_background()
 
     def time_dep_prev_state(self):
@@ -353,6 +538,17 @@ class MsLightweaverManager:
         dNrPops = 0.0
         underTol = False
         # self.ctx.spect.J[:] = 0.0
+        if self.prd:
+            for atom in self.ctx.activeAtoms:
+                for t in atom.trans:
+                    try:
+                        t.rhoPrd.fill(1.0)
+                    except:
+                        pass
+                    
+            self.ctx.configure_hprd_coeffs()
+            self.ctx.formal_sol_gamma_matrices()
+            self.ctx.prd_redistribute(200)
 
         prevState = self.time_dep_prev_state()
         for sub in range(nSubSteps):
@@ -366,25 +562,34 @@ class MsLightweaverManager:
                 continue
             if not underTol:
                 underTol = True
-                self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
+                if sub > 0:
+                    self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
+                    self.ctx.update_deps()
+                    # if self.prd:
+                        # self.ctx.configure_hprd_coeffs()
+
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
 
-            if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol) 
+            if self.prd:
+                self.ctx.prd_redistribute(maxIter=5, tol=10*delta)
+
+            if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
                             or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)):
                 break
         else:
             self.ctx.depthData.fill = True
             self.ctx.formal_sol_gamma_matrices()
             self.ctx.depthData.fill = False
-            
-            sourceData = {'chi': np.copy(self.ctx.depthData.chi),
-                        'eta': np.copy(self.ctx.depthData.eta),
-                        'chiBg': np.copy(self.ctx.background.chi),
-                        'etaBg': np.copy(self.ctx.background.eta),
-                        'scaBg': np.copy(self.ctx.background.sca),
-                        'J': np.copy(self.ctx.spect.J)
-                        }
+
+            sourceData = {
+                'chi': np.copy(self.ctx.depthData.chi),
+                'eta': np.copy(self.ctx.depthData.eta),
+                'chiBg': np.copy(self.ctx.background.chi),
+                'etaBg': np.copy(self.ctx.background.eta),
+                'scaBg': np.copy(self.ctx.background.sca),
+                'J': np.copy(self.ctx.spect.J)
+                         }
             with open(self.outputDir + 'Fails.txt', 'a') as f:
                 f.write('%d, %.4e %.4e\n' % (self.idx, delta, dJ))
 

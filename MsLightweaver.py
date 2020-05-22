@@ -15,18 +15,19 @@ from ReadAtmost import read_atmost
 from threadpoolctl import threadpool_limits
 threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZAdv2/'
+OutputDir = 'TimestepsRadynZAdvWenoZ0MgLowTol/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
-NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
+NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
-FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(), 
+FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
 ConserveCharge = True
 PopulationTransportMode = 'Advect'
+Prd = True
 
-test_timesteps_in_dir(OutputDir) 
+test_timesteps_in_dir(OutputDir)
 
 atmost = read_atmost('atmost.dat')
 atmost.to_SI()
@@ -36,12 +37,13 @@ if atmost.bheat1.shape[0] == 0:
 startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
-ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir, 
-                          atoms=NasaAtoms, 
-                          activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
-                          conserveCharge=ConserveCharge, 
-                          populationTransportMode=PopulationTransportMode)
-ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
+ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
+                          atoms=FchromaAtoms,
+                          activeAtoms=['H', 'Ca', 'Mg'], startingCtx=startingCtx,
+                          conserveCharge=ConserveCharge,
+                          populationTransportMode=PopulationTransportMode,
+                          prd=Prd)
+ms.initial_stat_eq(popTol=1e-4, Nscatter=10)
 ms.save_timestep()
 
 # NOTE(cmo): Due to monkey-patching we can't reload the context currently
@@ -53,15 +55,18 @@ maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost.bheat1[0]
 firstStep = 0
 if firstStep != 0:
+    # NOTE(cmo): This loads the state at the end of firstStep, therefore we
+    # need to start integrating at firstStep+1
     ms.load_timestep(firstStep)
     ms.ctx.spect.J[:] = 0.0
     ms.ctx.formal_sol_gamma_matrices()
+    firstStep += 1
 
 for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
+    ms.time_dep_step(popsTol=3e-4, JTol=5e-3, nSubSteps=1000, theta=1.0)
     ms.ctx.clear_ng()
     ms.save_timestep()
     stepEnd = time.time()
