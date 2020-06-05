@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit
 from lightweaver import ConvergenceError
+from scipy.linalg import solve_banded
 
 @njit(cache=True)
 def anj_pro(z, vz, dt, i0, an0, an1):

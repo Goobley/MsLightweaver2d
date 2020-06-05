@@ -23,6 +23,7 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
+AtomSet = FchromaAtoms
 ConserveCharge = True
 PopulationTransportMode = 'Advect'
 Prd = False
@@ -38,7 +39,7 @@ startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
-                          atoms=FchromaAtoms,
+                          atoms=AtomSet,
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           conserveCharge=ConserveCharge,
                           populationTransportMode=PopulationTransportMode,

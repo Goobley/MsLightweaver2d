@@ -232,7 +232,7 @@ def nr_advect(atmost, i0, eqPops, activeAtomNames, atomicTable):
         for i in range(pop.shape[0]):
             pop[i, :] = an_sol(atmost, i0, eqPops[a][i])
         nTotal = d1 / (atomicTable.weightPerH * lw.Amu) * atomicTable[a].abundance
-        popCorrectionFactor = nTotal / p.sum(axis=0)
+        popCorrectionFactor = nTotal / pop.sum(axis=0)
         print('Max Correction %s: %.2e' % (a, np.abs(1-popCorrectionFactor).max()))
         pop *= popCorrectionFactor
         eqPops[a][...] = pop
