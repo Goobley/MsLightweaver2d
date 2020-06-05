@@ -30,6 +30,7 @@ from HydroWeno.Weno import reconstruct_weno_nm_z
 import warnings
 from traceback import print_stack
 from weno4 import weno4
+from RadynAdvection import an_sol
 
 def weno4_safe(xs, xp, fp, **kwargs):
     xsort = np.argsort(xp)
@@ -224,6 +225,17 @@ def advect(atmost, tIdx, eqPops, activeAtomNames, atomicTable, refinementLevel=0
         #     p[maxPop, k] = 0.0
         #     p[maxPop, k] = nTotal[k] - np.sum(p[:, k])
 
+def nr_advect(atmost, i0, eqPops, activeAtomNames, atomicTable):
+    d1 = atmost.d1[i0+1]
+    for a in activeAtomNames:
+        pop = np.zeros_like(eqPops[a])
+        for i in range(pop.shape[0]):
+            pop[i, :] = an_sol(atmost, i0, eqPops[a][i])
+        nTotal = d1 / (atomicTable.weightPerH * lw.Amu) * atomicTable[a].abundance
+        popCorrectionFactor = nTotal / p.sum(axis=0)
+        print('Max Correction %s: %.2e' % (a, np.abs(1-popCorrectionFactor).max()))
+        pop *= popCorrectionFactor
+        eqPops[a][...] = pop
 
 @njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
@@ -455,7 +467,8 @@ class MsLightweaverManager:
             #     nTotalAdv = nTotal * densityAdv
             #     p *= nTotalAdv / p.sum(axis=0)
 
-            advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
+            # advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
+            nr_advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
 
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
             # consistent later (in update_deps if conserveCharge=True). If
@@ -546,7 +559,7 @@ class MsLightweaverManager:
                         t.gII[0,0,0] = -1.0
                     except:
                         pass
-                    
+
             self.ctx.configure_hprd_coeffs()
             self.ctx.formal_sol_gamma_matrices()
             self.ctx.prd_redistribute(200)
@@ -578,8 +591,8 @@ class MsLightweaverManager:
 
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
-            
-            
+
+
 
             if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
                             or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)

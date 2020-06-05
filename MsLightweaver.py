@@ -15,7 +15,7 @@ from ReadAtmost import read_atmost
 from threadpoolctl import threadpool_limits
 threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZAdvWenoZ0MgOnlyNoCc/'
+OutputDir = 'TimestepsRadynZAdvNr/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -25,7 +25,7 @@ FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
 ConserveCharge = True
 PopulationTransportMode = 'Advect'
-Prd = True
+Prd = False
 
 test_timesteps_in_dir(OutputDir)
 
@@ -39,7 +39,7 @@ startingCtx = optional_load_starting_context(OutputDir)
 start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
                           atoms=FchromaAtoms,
-                          activeAtoms=['H', 'Ca', 'Mg'], startingCtx=startingCtx,
+                          activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
                           conserveCharge=ConserveCharge,
                           populationTransportMode=PopulationTransportMode,
                           prd=Prd)
@@ -53,7 +53,7 @@ ms.save_timestep()
 
 maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost.bheat1[0]
-firstStep = 130
+firstStep = 0
 if firstStep != 0:
     # NOTE(cmo): This loads the state at the end of firstStep, therefore we
     # need to start integrating at firstStep+1
