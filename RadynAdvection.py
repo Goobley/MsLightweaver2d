@@ -2,6 +2,7 @@ import numpy as np
 from numba import njit
 from lightweaver import ConvergenceError
 from scipy.linalg import solve_banded
+import pdb
 
 @njit(cache=True)
 def anj_pro(z, vz, dt, i0, an0, an1):
@@ -164,7 +165,24 @@ def fd_fn(qNew, fn, E=None):
 
     return jacobian
 
-def an_sol(atmost, i0, n0, maxIter=50, tol=1e-5):
+@njit(cache=True)
+def banded_mat_vec(a, b):
+    Nbands = a.shape[0]
+    UpperBands = a.shape[0] // 2
+    assert a.shape[1] == b.shape[0]
+    result = np.zeros_like(b)
+
+    for i in range(a.shape[1]):
+        for s in range(-UpperBands, UpperBands+1):
+            if (i+s >= b.shape[0]) or (i+s < 0):
+                continue
+
+        result[i] += a[UpperBands + s, i] * b[i+s]
+
+    return result
+
+
+def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
     i1 = i0 + 1
     z0 = atmost.z1[i0]
     z1 = atmost.z1[i1]
@@ -196,14 +214,32 @@ def an_sol(atmost, i0, n0, maxIter=50, tol=1e-5):
 
     update = 1
 
+    # NOTE(cmo): Armijo line search parameters
+    armijoC = 0.5
+    tau = 0.5
+
     # while update > 1e-5:
     # NOTE(cmo): Primary NR loop
     for i in range(maxIter):
         E = objective(n1Guess)
         W = fd_fn(n1Guess, fn=objective, E=E)
         dq = solve_banded((2, 2), W, -E)
-        update = np.abs(dq / n1Guess).max()
 
+        # NOTE(cmo): Always do full NR on first iteration, backtrack afterwards
+        if i >= 1:
+            linearDescent = armijoC * banded_mat_vec(W, dq)
+            alpha = 1.0
+            for j in range(20):
+                possibleObjective = objective(n1Guess + alpha * dq)
+                if np.abs(possibleObjective).sum() <= np.abs(E + alpha * linearDescent).sum():
+                    dq = alpha * dq
+                    break
+
+                alpha *= tau
+
+        # pdb.set_trace()
+
+        update = np.abs(dq / n1Guess).max()
         n1Guess += dq
 
         if update < tol:
