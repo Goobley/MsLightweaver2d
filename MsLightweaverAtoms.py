@@ -197,8 +197,8 @@ def H_6_nasa():
         AtomicLevel(E=109754.578000, g=1.000000, label="H II continuum", stage=1, J=None, L=None, S=None),
     ],
     lines=[
-        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=10.000000*qr, qWing=10.000000*qr, vdw=VdwRadyn(vals=[1.0]), gRad=4.702e8, stark=0.0),
-        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=50, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=9.991e7, stark=0.0),
+        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.CRD, NlambdaGen=100, qCore=10.000000*qr, qWing=10.000000*qr, vdw=VdwRadyn(vals=[1.0]), gRad=4.702e8, stark=0.0),
+        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.CRD, NlambdaGen=50, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=9.991e7, stark=0.0),
         VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, NlambdaGen=31, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=3.021e7, stark=0.0),
         VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, NlambdaGen=31, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=1.156e7, stark=0.0),
         VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, NlambdaGen=70, qCore=3.000000*qr, qWing=200.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=5.701e+8, stark=0.0),
@@ -674,8 +674,8 @@ def CaII_nasa():
         AtomicLevel(E=95785.470000, g=1.000000, label="CA III 3P6 1SE", stage=2, J=Fraction(0, 1), L=0, S=Fraction(0, 1)),
     ],
     lines=[
-        VoigtLine(j=3, i=0, f=3.3000e-01, type=LineType.PRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.62]), gRad=1.48e+08, stark=3.0e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=0, f=6.6000e-01, type=LineType.PRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.61]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=3, i=0, f=3.3000e-01, type=LineType.CRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.62]), gRad=1.48e+08, stark=3.0e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=4, i=0, f=6.6000e-01, type=LineType.CRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.61]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
         VoigtLine(j=3, i=1, f=4.42e-02, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.04]), gRad=1.48e+08, stark=3.0e-6*-Const.CM_TO_M**3),
         VoigtLine(j=4, i=1, f=8.830e-3, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.01]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
         VoigtLine(j=4, i=2, f=5.3e-02, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.01]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),

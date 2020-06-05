@@ -543,6 +543,7 @@ class MsLightweaverManager:
                 for t in atom.trans:
                     try:
                         t.rhoPrd.fill(1.0)
+                        t.gII[0,0,0] = -1.0
                     except:
                         pass
                     
@@ -553,16 +554,23 @@ class MsLightweaverManager:
         prevState = self.time_dep_prev_state()
         for sub in range(nSubSteps):
             # self.JPrev[:] = self.ctx.spect.J
+            if self.prd and sub > 1:
+                if delta > 5e-1:
+                    # self.ctx.prd_redistribute(maxIter=2, tol=5e-1)
+                    pass
+                else:
+                    self.ctx.prd_redistribute(maxIter=5, tol=min(1e-1, 10*delta))
 
             dJ = self.ctx.formal_sol_gamma_matrices()
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
+
             if delta > 5e-1:
                 continue
             if not underTol:
                 underTol = True
-                if sub > 0:
+                if sub > 0 and self.conserveCharge:
                     self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
                     self.ctx.update_deps()
                     # if self.prd:
@@ -570,12 +578,12 @@ class MsLightweaverManager:
 
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
-
-            if self.prd:
-                self.ctx.prd_redistribute(maxIter=5, tol=10*delta)
+            
+            
 
             if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
-                            or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)):
+                            or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
+                            or (dJ < 1e-6)):
                 break
         else:
             self.ctx.depthData.fill = True

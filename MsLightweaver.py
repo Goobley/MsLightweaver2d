@@ -15,7 +15,7 @@ from ReadAtmost import read_atmost
 from threadpoolctl import threadpool_limits
 threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZAdvWenoZ0MgLowTol/'
+OutputDir = 'TimestepsRadynZAdvWenoZ0MgOnlyNoCc/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
                           conserveCharge=ConserveCharge,
                           populationTransportMode=PopulationTransportMode,
                           prd=Prd)
-ms.initial_stat_eq(popTol=1e-4, Nscatter=10)
+ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
 ms.save_timestep()
 
 # NOTE(cmo): Due to monkey-patching we can't reload the context currently
@@ -53,7 +53,7 @@ ms.save_timestep()
 
 maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost.bheat1[0]
-firstStep = 0
+firstStep = 130
 if firstStep != 0:
     # NOTE(cmo): This loads the state at the end of firstStep, therefore we
     # need to start integrating at firstStep+1
@@ -66,7 +66,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms.increment_step()
-    ms.time_dep_step(popsTol=3e-4, JTol=5e-3, nSubSteps=1000, theta=1.0)
+    ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
     ms.ctx.clear_ng()
     ms.save_timestep()
     stepEnd = time.time()
