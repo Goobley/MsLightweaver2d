@@ -224,6 +224,9 @@ def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
         E = objective(n1Guess)
         W = fd_fn(n1Guess, fn=objective, E=E)
         dq = solve_banded((2, 2), W, -E)
+        update = np.abs(dq / n1Guess).max()
+        if update < tol:
+            break
 
         # NOTE(cmo): Always do full NR on first iteration, backtrack afterwards
         if i >= 1:
@@ -239,11 +242,8 @@ def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
 
         # pdb.set_trace()
 
-        update = np.abs(dq / n1Guess).max()
         n1Guess += dq
 
-        if update < tol:
-            break
     else:
         raise ConvergenceError('Too many iterations')
 
