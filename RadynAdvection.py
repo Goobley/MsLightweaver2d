@@ -7,19 +7,6 @@ import pdb
 @njit(cache=True)
 def anj_pro(z, vz, dt, i0, an0, an1):
     i1 = i0 + 1
-    # z0 = atmost.z1[i0]
-    # z1 = atmost.z1[i1]
-    # # d0 = atmost.d1[i0]
-    # # d1 = atmost.d1[i1]
-    # vz0 = atmost.vz1[i0]
-    # vz1 = atmost.vz1[i1]
-    # dtp = atmost.dt[i0]
-    # dtn = atmost.dt[i1]
-    # z0 = z[i0]
-    # z1 = z[i1]
-    # vz0 = vz[i0]
-    # vz1 = vz[i1]
-    # dtn = dt[i1]
     z0 = z[0]
     z1 = z[1]
     vz0 = vz[0]
@@ -182,7 +169,7 @@ def banded_mat_vec(a, b):
     return result
 
 
-def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
+def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5, lineSearch=True):
     i1 = i0 + 1
     z0 = atmost.z1[i0]
     z1 = atmost.z1[i1]
@@ -229,7 +216,7 @@ def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
             break
 
         # NOTE(cmo): Always do full NR on first iteration, backtrack afterwards
-        if i >= 1:
+        if i >= 1 and lineSearch:
             linearDescent = armijoC * banded_mat_vec(W, dq)
             alpha = 1.0
             for j in range(20):
@@ -246,6 +233,167 @@ def an_sol(atmost, i0, n0, maxIter=100, tol=1e-5):
 
     else:
         raise ConvergenceError('Too many iterations')
+
+    # NOTE(cmo): Boundary condition as per RADYN
+    n1Guess[0] = n1Guess[1]
+    return n1Guess
+
+def an_rad_sol(atmost, i0, n0, n1Guess, n1Total, Gamma):
+    i1 = i0 + 1
+    z0 = atmost.z1[i0]
+    z1 = atmost.z1[i1]
+    d0 = atmost.d1[i0]
+    d1 = atmost.d1[i1]
+    vz0 = atmost.vz1[i0]
+    vz1 = atmost.vz1[i1]
+    dtn = atmost.dt[i1]
+    theta = 0.55
+
+    BlockSize = Gamma.shape[0]
+    WW = np.zeros((4 * BlockSize + 1, BlockSize * Gamma.shape[2]))
+    EE = np.zeros((BlockSize * Gamma.shape[2]))
+
+    # NOTE(cmo): Load Gamma into banded matrix
+    for k in range(Gamma.shape[2]):
+        for i in range(Gamma.shape[0]):
+            GammaStart = 2*BlockSize - i
+            WW[GammaStart:GammaStart+BlockSize, BlockSize*k+i] = -Gamma[i, :, k] * dtn * (z1[k-1] - z1[k]) / (n0[:, k] * (z0[k-1] - z0[k]))
+
+    fmj = flux_calc_pro(atmost.z1, atmost.d1, atmost.vz1, atmost.dt, i0)
+
+    for i in range(n1Guess.shape[0]):
+        n0Row = n0[i]
+        def objective(n1):
+            an0 = n0Row / d0
+
+            dn0 = np.zeros_like(d0)
+            dn0[1:] = n0Row[1:] * (z0[:-1] - z0[1:])
+
+            an1 = n1 / d1
+
+            anj = anj_pro(atmost.z1[i0:i0+2], atmost.vz1[i0:i0+2], atmost.dt[i1], i0, an0, an1)
+
+            e = np.zeros_like(n1)
+            e[1:] = (n1[1:] * (z1[:-1] - z1[1:]) - n0Row[1:] * (z0[:-1] - z0[1:])) / dn0[1:]
+            e[1:] += (anj[:-1] * fmj[:-1] - anj[1:] * fmj[1:]) / dn0[1:]
+
+            return e
+
+        E = objective(n1Guess[i])
+        W = fd_fn(n1Guess[i], fn=objective, E=E)
+
+        for k in range(E.shape[0]):
+            ii = i + BlockSize * k
+            # EE[ii] = E[k]
+
+            # for j in range(5):
+            #     WW[j*BlockSize, ii] += W[j, k]
+
+            if i < BlockSize-1:
+                continue
+
+            EE[ii] -= (Gamma[i, :, k] @ n1Guess[:, k]) * (z1[k-1] - z1[k]) * dtn / (n0Row[k] * (z0[k-1] - z0[k]))
+            # EE[ii] -= (Gamma[i, :, k] @ n1Guess[:, k]) * dtn * (z1[k-1] - z1[k])# / (n0Row[k] * (z0[k-1] - z0[k]))
+
+    Nspace = Gamma.shape[2]
+    for k in range(Nspace):
+        ii = 5 + BlockSize * k
+        GammaStart = 2*BlockSize - 5
+
+        EE[ii] = (n1Total[k] - np.sum(n1Guess[:, k])) / (n0[5, k] * (z0[k-1] - z0[k]))
+        # EE[ii] = (n1Total[k] - np.sum(n1Guess[:, k])) # / (n0[5, k] * (z0[k-1] - z0[k]))
+        for j in range(BlockSize):
+            # WW[j, ii] = n1Guess[j, k] / n0[j, k]
+            WW[GammaStart+j, ii] = 1.0 / n0[j, k]
+        # WW[GammaStart:GammaStart+BlockSize, ii] = 1.0
+
+    pdb.set_trace()
+    dq = solve_banded((2*BlockSize, 2*BlockSize), WW, -EE)
+    n1GuessFlat = n1Guess.T.flatten()
+    update = np.abs(dq / n1GuessFlat).max()
+    pdb.set_trace()
+
+    nrLimit = 1.0
+    maxUpdate = 2.0
+    if update > maxUpdate:
+        nrLimit = maxUpdate / update
+    print('dPops: %.2e' % (nrLimit * update))
+
+    dq = dq.reshape(n1Guess.shape[1], n1Guess.shape[0])
+    dq = dq.T
+    n1Guess += nrLimit * dq
+    # NOTE(cmo): Boundary condition as per RADYN
+    n1Guess[:, 0] = n1Guess[:, 1]
+    return update
+
+
+def an_gml_sol(atmost, i0, n0, n1Guess, gml, maxIter=100, tol=1e-5, lineSearch=True):
+    i1 = i0 + 1
+    z0 = atmost.z1[i0]
+    z1 = atmost.z1[i1]
+    d0 = atmost.d1[i0]
+    d1 = atmost.d1[i1]
+    vz0 = atmost.vz1[i0]
+    vz1 = atmost.vz1[i1]
+    dtn = atmost.dt[i1]
+    theta = 0.55
+
+    fmj = flux_calc_pro(atmost.z1, atmost.d1, atmost.vz1, atmost.dt, i0)
+    an0 = n0 / d0
+
+    dn0 = np.zeros_like(d0)
+    dn0[1:] = n0[1:] * (z0[:-1] - z0[1:])
+
+    def objective(n1):
+        an1 = n1 / d1
+
+        anj = anj_pro(atmost.z1[i0:i0+2], atmost.vz1[i0:i0+2], atmost.dt[i1], i0, an0, an1)
+
+        e = np.zeros_like(n1)
+        e[1:] = (n1[1:] * (z1[:-1] - z1[1:]) - n0[1:] * (z0[:-1] - z0[1:])) / dn0[1:]
+        e[1:] += (anj[:-1] * fmj[:-1] - anj[1:] * fmj[1:]) / dn0[1:]
+        e[1:] -= gml[1:] * (z1[:-1] - z1[1:]) * dtn / dn0[1:]
+
+        return e
+
+    # n1Guess = np.copy(n0)
+
+    update = 1
+
+    # NOTE(cmo): Armijo line search parameters
+    armijoC = 0.5
+    tau = 0.5
+
+    # while update > 1e-5:
+    # NOTE(cmo): Primary NR loop
+    for i in range(maxIter):
+        E = objective(n1Guess)
+        W = fd_fn(n1Guess, fn=objective, E=E)
+        dq = solve_banded((2, 2), W, -E)
+        update = np.abs(dq / n1Guess).max()
+        if update < tol:
+            break
+
+        # NOTE(cmo): Always do full NR on first iteration, backtrack afterwards
+        if i >= 1 and lineSearch:
+            linearDescent = armijoC * banded_mat_vec(W, dq)
+            alpha = 1.0
+            for j in range(20):
+                possibleObjective = objective(n1Guess + alpha * dq)
+                if np.abs(possibleObjective).sum() <= np.abs(E + alpha * linearDescent).sum():
+                    dq = alpha * dq
+                    break
+
+                alpha *= tau
+
+        # pdb.set_trace()
+
+        n1Guess += dq
+
+    else:
+        raise ConvergenceError('Too many iterations')
+
+    print(i)
 
     # NOTE(cmo): Boundary condition as per RADYN
     n1Guess[0] = n1Guess[1]

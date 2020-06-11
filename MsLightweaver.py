@@ -15,7 +15,7 @@ from ReadAtmost import read_atmost
 from threadpoolctl import threadpool_limits
 threadpool_limits(1)
 
-OutputDir = 'TimestepsRadynZAdvNr/'
+OutputDir = 'TimestepsAdvNrNoShullCdi/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -23,7 +23,7 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
-AtomSet = NasaAtoms
+AtomSet = FchromaAtoms
 ConserveCharge = True
 PopulationTransportMode = 'Advect'
 Prd = False
@@ -54,7 +54,7 @@ ms.save_timestep()
 
 maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = ms.atmost.bheat1[0]
-firstStep = 846
+firstStep = 0
 if firstStep != 0:
     # NOTE(cmo): This loads the state at the end of firstStep, therefore we
     # need to start integrating at firstStep+1

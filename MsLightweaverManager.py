@@ -30,7 +30,8 @@ from HydroWeno.Weno import reconstruct_weno_nm_z
 import warnings
 from traceback import print_stack
 from weno4 import weno4
-from RadynAdvection import an_sol
+from RadynAdvection import an_sol, an_rad_sol, an_gml_sol
+import pdb
 
 def weno4_safe(xs, xp, fp, **kwargs):
     xsort = np.argsort(xp)
@@ -230,7 +231,7 @@ def nr_advect(atmost, i0, eqPops, activeAtomNames, atomicTable):
     for a in activeAtomNames:
         pop = np.zeros_like(eqPops[a])
         for i in range(pop.shape[0]):
-            pop[i, :] = an_sol(atmost, i0, eqPops[a][i])
+            pop[i, :] = an_sol(atmost, i0, eqPops[a][i], tol=1e-8, maxIter=1000)
         nTotal = d1 / (atomicTable.weightPerH * lw.Amu) * atomicTable[a].abundance
         popCorrectionFactor = nTotal / pop.sum(axis=0)
         print('Max Correction %s: %.2e' % (a, np.abs(1-popCorrectionFactor).max()))
@@ -242,6 +243,7 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     Nlevel = n.shape[0]
     Nspace = n.shape[1]
 
+    GammaPrev = GammaPrev if GammaPrev is not None else np.empty_like(Gamma)
     Gam = np.zeros((Nlevel, Nlevel))
     nk = np.zeros(Nlevel)
     nPrevIter = np.zeros(Nlevel)
@@ -253,7 +255,10 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
         nPrevIter[:] = nPrev[:, k]
         Gam[...] = -theta * Gamma[:,:, k] * dt
         Gam += np.eye(Nlevel)
-        nk[:] = (1.0 - theta) * dt * GammaPrev[:,:, k] @ nPrevIter + nPrevIter
+        if theta != 1.0:
+            nk[:] = (1.0 - theta) * dt * GammaPrev[:,:, k] @ nPrevIter + nPrevIter
+        else:
+            nk[:] = nPrevIter
 
         nNew = np.linalg.solve(Gam, nk)
         n[:, k] = nNew
@@ -296,7 +301,7 @@ class MsLightweaverManager:
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
         else:
-            nHTot = self.nHTot[0]
+            nHTot = np.copy(self.nHTot[0])
             self.atmos = Atmosphere(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
 
             self.atmos.convert_scales()
@@ -469,6 +474,7 @@ class MsLightweaverManager:
 
             # advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
             nr_advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
+            # pass
 
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
             # consistent later (in update_deps if conserveCharge=True). If
@@ -505,6 +511,7 @@ class MsLightweaverManager:
                 self.eqPops.atomicPops[name].pops[:] = pops['n']
             self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
         self.atmos.ne[:] = step['ne']
+        self.ctx.spect.I[:] = step['Iwave']
         self.ctx.update_deps()
 
     def increment_step(self):
@@ -525,10 +532,12 @@ class MsLightweaverManager:
             self.ctx.configure_hprd_coeffs()
         # self.opac_background()
 
-    def time_dep_prev_state(self):
+    def time_dep_prev_state(self, evalGamma=False):
+        if evalGamma:
+            self.ctx.formal_sol_gamma_matrices()
         s = {}
         s['pops'] = [np.copy(a.n) for a in self.ctx.activeAtoms]
-        s['Gamma'] = [np.copy(a.Gamma) for a in self.ctx.activeAtoms]
+        s['Gamma'] = [np.copy(a.Gamma) if evalGamma else None for a in self.ctx.activeAtoms]
         return s
 
     def time_dep_update(self, dt, prevState, theta=0.5):
@@ -546,8 +555,8 @@ class MsLightweaverManager:
 
         return maxDelta
 
-    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
-        dt = self.atmost.dt[self.idx+1]
+    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=1.0, dt=None):
+        dt = dt if dt is not None else self.atmost.dt[self.idx+1]
         dNrPops = 0.0
         underTol = False
         # self.ctx.spect.J[:] = 0.0
@@ -564,7 +573,7 @@ class MsLightweaverManager:
             self.ctx.formal_sol_gamma_matrices()
             self.ctx.prd_redistribute(200)
 
-        prevState = self.time_dep_prev_state()
+        prevState = self.time_dep_prev_state(evalGamma=(theta!=1.0))
         for sub in range(nSubSteps):
             # self.JPrev[:] = self.ctx.spect.J
             if self.prd and sub > 1:
@@ -578,13 +587,32 @@ class MsLightweaverManager:
             # if sub > 2:
             # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
+            # for ia, atom in enumerate(self.ctx.activeAtoms):
+            #     nDag = np.copy(atom.n)
+            #     print(atom.atomicModel.name)
+            #     gml = np.zeros_like(atom.n)
+            #     for i in range(atom.n.shape[0]):
+            #         for k in range(atom.n.shape[1]):
+            #             gml[i, k] = atom.Gamma[i, :, k] @ atom.n[:, k]
 
+            #     for i in range(atom.n.shape[0]):
+            #         atom.n[i, :] = an_gml_sol(self.atmost, self.idx, prevState['pops'][ia][i], atom.n[i], gml[i], tol=1e-8)
+
+            #     advChange = np.abs(nDag - atom.n) / nDag
+            #     print('advChange: %.3e' % advChange.max())
+
+
+            #     # delta = an_rad_sol(self.atmost, self.idx, prevState['pops'][ia], atom.n, atom.nTotal, atom.Gamma)
+
+            # pdb.set_trace()
+            # delta = advChange.max()
             if delta > 5e-1:
+                # underTol = False
                 continue
             if not underTol:
                 underTol = True
                 if sub > 0 and self.conserveCharge:
-                    self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
+                    # self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
                     self.ctx.update_deps()
                     # if self.prd:
                         # self.ctx.configure_hprd_coeffs()
@@ -620,6 +648,35 @@ class MsLightweaverManager:
             print('NON-CONVERGED')
         # self.ctx.time_dep_conserve_charge(prevState)
 
+
+    # def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
+    #     dt = self.atmost.dt[self.idx+1]
+    #     dNrPops = 0.0
+    #     underTol = False
+
+    #     prevState = self.time_dep_prev_state()
+    #     for sub in range(nSubSteps):
+    #         dJ = self.ctx.formal_sol_gamma_matrices()
+    #         delta = self.time_dep_update(0.5 * dt, prevState, theta=theta)
+    #         if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
+    #                         or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
+    #                         or (dJ < 1e-6)):
+    #             break
+
+    #     print('-'*80)
+    #     print('ADVECTING')
+    #     print('-'*80)
+    #     nr_advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
+
+    #     prevState = self.time_dep_prev_state()
+    #     for sub in range(nSubSteps):
+    #         dJ = self.ctx.formal_sol_gamma_matrices()
+    #         delta = self.time_dep_update(0.5 * dt, prevState, theta=theta)
+    #         if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
+    #                         or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
+    #                         or (dJ < 1e-6)):
+    #             break
+
     def cont_fn_data(self, step):
         self.load_timestep(step)
         self.ctx.depthData.fill = True
@@ -638,25 +695,41 @@ class MsLightweaverManager:
                       }
         return sourceData
 
-    def rf_k(self, step, dt, pertSize, k):
+    def rf_k(self, step, dt, pertSize, k, Jstart=None):
         self.load_timestep(step)
+        print(pertSize)
+
         self.ctx.clear_ng()
-        self.ctx.spect.J[:] = 0.0
+        if Jstart is not None:
+            self.ctx.spect.J[:] = Jstart
+        else:
+            self.ctx.spect.J[:] = 0.0
 
         self.atmos.temperature[k] += 0.5 * pertSize
         self.ctx.update_deps()
 
-        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt)
+        if Jstart is None:
+            dJ = 1.0
+            while dJ > 1e-3:
+                dJ = self.ctx.formal_sol_gamma_matrices()
+        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt, theta=1.0)
         plus = np.copy(self.ctx.spect.I[:, -1])
 
         self.load_timestep(step)
         self.ctx.clear_ng()
-        self.ctx.spect.J[:] = 0.0
+        if Jstart is not None:
+            self.ctx.spect.J[:] = Jstart
+        else:
+            self.ctx.spect.J[:] = 0.0
 
         self.atmos.temperature[k] -= 0.5 * pertSize
         self.ctx.update_deps()
 
-        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt)
+        if Jstart is None:
+            dJ = 1.0
+            while dJ > 1e-3:
+                dJ = self.ctx.formal_sol_gamma_matrices()
+        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt, theta=1.0)
         minus = np.copy(self.ctx.spect.I[:, -1])
 
         return plus, minus

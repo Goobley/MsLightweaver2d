@@ -9,33 +9,33 @@ import pickle
 from dataclasses import dataclass
 import numpy as np
         # tg = atmos.temperature
-        
+
 @dataclass(eq=False)
 class VdwRadyn(VdwApprox):
     def setup(self, line: 'AtomicLine', table: 'AtomicTable'):
         self.line = line
         if len(self.vals) != 1:
             raise ValueError('VdwRadyn expects 1 coefficient (%s)' % repr(line))
-        
+
         Z = line.jLevel.stage + 1
         j = line.j
         ic = j + 1
         while line.atom.levels[ic].stage < Z:
             ic += 1
         cont = line.atom.levels[ic]
-        
+
         zz = line.iLevel.stage + 1
         deltaR = (Const.ERydberg / (cont.E_SI - line.jLevel.E_SI))**2 \
                 - (Const.ERydberg / (cont.E_SI - line.iLevel.E_SI))**2
         fourPiEps0 = 4.0 * np.pi * Const.Epsilon0
         c625 = (2.5 * Const.QElectron**2 / fourPiEps0 * Const.ABarH / fourPiEps0 \
                 * 2 * np.pi * (Z * Const.RBohr)**2 / Const.HPlanck * deltaR)**0.4
-        
+
         self.cross = self.vals[0] * 8.411 * (8.0 * Const.KBoltzmann / np.pi * \
             (1.0 / (table['H'].weight * Const.Amu) + \
                 1.0 / (table[line.atom.name].weight * Const.Amu)))**0.3 * c625
-        
-        
+
+
     def broaden(self, temperature, nHGround, broad):
         broad[:] = self.cross * temperature**0.3 * nHGround
 
@@ -349,6 +349,10 @@ class Ar85CeaCaII(CollisionalRates):
         # TODO(cmo): Which bits are the branching ratios?! -- Read AR85 in more detail
         a = 6.0e-17 # NOTE(cmo): From looking at the AR85 paper, (page 430), should this instead be 9.8e-17 (Ca+)
         iea = 25.0
+        # NOTE(cmo): From Appendix A to AR85 for Ca+
+        # a = 9.8e-17
+        # iea = 29.0
+        # NOTE(cmo): Changed above back for consistency, need to look into which is technically more correct though
         y = iea / kBT
         f1y = fone(y)
         b = 1.12
@@ -381,7 +385,7 @@ class Shull82(CollisionalRates):
         self.jLevel = atom.levels[self.j]
 
     def __repr__(self):
-        s = 'Shull82(row=%d, col=%d, aCol=%e, tCol=%e, aRad=%e, xRad=%e, aDi=%e, bDi=%e, to=%e, t1=%e)' % (self.row, self.col, self.aCol, self.tCol, self.aRad, self.xRad, self.aDi, self.bDi, self.t0, self.t1)
+        s = 'Shull82(row=%d, col=%d, aCol=%e, tCol=%e, aRad=%e, xRad=%e, aDi=%e, bDi=%e, t0=%e, t1=%e)' % (self.row, self.col, self.aCol, self.tCol, self.aRad, self.xRad, self.aDi, self.bDi, self.t0, self.t1)
         return s
 
     def compute_rates(self, atmos, nstar, Cmat):
@@ -390,7 +394,7 @@ class Shull82(CollisionalRates):
         rhoq = (atmos.ne * Const.CM_TO_M**3) / zz**7
         x = (0.5 * zz + (self.col - 1)) * self.row / 3
         beta = -0.2 / np.log(x + np.e)
-        
+
         tg = atmos.temperature
         # NOTE(cmo): This is the RH formulation
         # rho0 = 30.0 + 50.0*x
@@ -401,7 +405,7 @@ class Shull82(CollisionalRates):
         rho0 = 30
         summers = 1.0 / (1.0 + rhoq / rho0)**0.14
 
-        
+
         cDown = self.aRad * (tg * 1e-4)**(-self.xRad)
         cDown += summers * self.aDi / tg / np.sqrt(tg) * np.exp(-self.t0 / tg) * (1.0 + self.bDi * np.exp(-self.t1 / tg))
 
