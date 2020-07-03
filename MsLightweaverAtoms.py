@@ -1,6 +1,8 @@
 from lightweaver.rh_atoms import He_9_atom
-from lightweaver.atomic_model import reconfigure_atom, AtomicModel, AtomicLevel, VoigtLine, VdwUnsold, LineType, HydrogenicContinuum, ExplicitContinuum, CollisionalRates, VdwApprox
-from lightweaver.collisional_rates import Omega, CI, CE, Ar85Cdi, Burgess, fone, TemperatureInterpolationRates
+from lightweaver.atomic_model import reconfigure_atom, AtomicModel,  AtomicLine, AtomicLevel, VoigtLine, LineType, HydrogenicContinuum, ExplicitContinuum, LinearCoreExpWings
+from lightweaver.broadening import VdwApprox, VdwUnsold, HydrogenLinearStarkBroadening, LineBroadening, RadiativeBroadening, MultiplicativeStarkBroadening
+from lightweaver.collisional_rates import CollisionalRates, Omega, CI, CE, Ar85Cdi, Burgess, fone, TemperatureInterpolationRates
+from lightweaver.atomic_set import SpeciesStateTable
 import lightweaver as lw
 from fractions import Fraction
 from Fang import FangHRates
@@ -10,9 +12,9 @@ from dataclasses import dataclass
 import numpy as np
         # tg = atmos.temperature
 
-@dataclass(eq=False)
+@dataclass(eq=False, repr=False)
 class VdwRadyn(VdwApprox):
-    def setup(self, line: 'AtomicLine', table: 'AtomicTable'):
+    def setup(self, line: AtomicLine):
         self.line = line
         if len(self.vals) != 1:
             raise ValueError('VdwRadyn expects 1 coefficient (%s)' % repr(line))
@@ -32,14 +34,22 @@ class VdwRadyn(VdwApprox):
                 * 2 * np.pi * (Z * Const.RBohr)**2 / Const.HPlanck * deltaR)**0.4
 
         self.cross = self.vals[0] * 8.411 * (8.0 * Const.KBoltzmann / np.pi * \
-            (1.0 / (table['H'].weight * Const.Amu) + \
-                1.0 / (table[line.atom.name].weight * Const.Amu)))**0.3 * c625
+            (1.0 / (lw.PeriodicTable['H'].mass * Const.Amu) + \
+                1.0 / (line.atom.element.mass * Const.Amu)))**0.3 * c625
 
 
-    def broaden(self, temperature, nHGround, broad):
-        broad[:] = self.cross * temperature**0.3 * nHGround
+    def broaden(self, atmos: lw.Atmosphere, eqPops: SpeciesStateTable) -> np.ndarray:
+        nHGround = eqPops['H'][0, :]
+        return self.cross * atmos.temperature**0.3 * nHGround
 
 # NOTE(cmo): Ignoring the continua (bf) grids for now, they shouldn't be important here, and would cause us to need to mess around with our cross-section grids
+
+def convert_alphaGrid(alphaGrid):
+    a = np.array(alphaGrid)
+    result = {'wavelengthGrid': a[:, 0][::-1].tolist(),
+              'alphaGrid': a[:, 1][::-1].tolist()}
+    return result
+
 
 def H_6():
     radynQNorm = 12.85e3
@@ -47,7 +57,7 @@ def H_6():
     qr = qNormRatio
 
     H_6_radyn = lambda: \
-    AtomicModel(name="H",
+    AtomicModel(element=lw.PeriodicTable['H'],
     levels=[
         AtomicLevel(E=0.000000, g=2.000000, label="H I 1S 2SE", stage=0, J=Fraction(1, 2), L=0, S=Fraction(1, 2)),
         AtomicLevel(E=82257.172000, g=8.000000, label="H I 2P 2PO", stage=0, J=Fraction(7, 2), L=1, S=Fraction(1, 2)),
@@ -57,16 +67,16 @@ def H_6():
         AtomicLevel(E=109754.578000, g=1.000000, label="H II continuum", stage=1, J=None, L=None, S=None),
     ],
     lines=[
-        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=20.000000, qWing=600.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=100, qCore=20.000000, qWing=250.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=100.000000, vdw=VdwRadyn(vals=[0.0]), gRad=0.0, stark=0.0),
-        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, NlambdaGen=100, qCore=20.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.701e+8, stark=0.0),
-        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=5.004e+08, stark=0.0),
-        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=250.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.818e+08, stark=0.0),
-        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.301e+08, stark=0.0),
-        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, NlambdaGen=40, qCore=10.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=1.115e+08, stark=0.000000),
-        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=40, qCore=5.000000, qWing=30.000000, vdw=VdwRadyn(vals=[1.0]), gRad=4.177e+07, stark=0.000000),
+        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=100, qCore=20.000000, qWing=600.000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=0.0)], elastic=[VdwRadyn(vals=[0.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=100, qCore=20.000000, qWing=250.000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=0.0)], elastic=[VdwRadyn(vals=[0.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=10.000000, qWing=100.0000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=0.0)], elastic=[VdwRadyn(vals=[0.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=10.000000, qWing=100.0000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=0.0)], elastic=[VdwRadyn(vals=[0.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=100, qCore=20.000000, qWing=250.000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=5.701e+8)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=80, qCore=10.000000, qWing=250.0000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=5.004e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=80, qCore=10.000000, qWing=250.0000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=4.818e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=10.000000, qWing=30.00000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.301e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=10.000000, qWing=30.00000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.115e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=5.000000, qWing=30.000000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=4.177e+07)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
         # NOTE(cmo): I don't believe RADYN does both linear and quadratic Stark broadening for H, so setting Stark to these numbers seems to make the lines overly wide
         # VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=15.000000, qWing=600.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
         # VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=50, qCore=10.000000, qWing=250.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
@@ -80,14 +90,14 @@ def H_6():
         # VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=20, qCore=1.000000, qWing=30.000000, vdw=VdwUnsold(vals=[1.0, 1.0]), gRad=4.177e+07, stark=0.000000),
     ],
     continua=[
-        ExplicitContinuum(j=5, i=0, alphaGrid=[[91.17, 6.538849999999999e-24],
+        ExplicitContinuum(j=5, i=0, **convert_alphaGrid(alphaGrid=[[91.17, 6.538849999999999e-24],
                                                 [85.0, 5.299099999999999e-24],
                                                 [80.0, 4.41789e-24],
                                                 [75.0, 3.64023e-24],
                                                 [70.0, 2.95964e-24],
                                                 [60.0, 1.8638e-24],
-                                                [50.5, 1.1112699999999999e-24]]),
-        ExplicitContinuum(j=5, i=1, alphaGrid=[[364.69, 1.41e-23],
+                                                [50.5, 1.1112699999999999e-24]])),
+        ExplicitContinuum(j=5, i=1, **convert_alphaGrid(alphaGrid=[[364.69, 1.41e-23],
                                                 [355.0, 1.3005699999999999e-23],
                                                 [340.0, 1.14257e-23],
                                                 [320.0, 9.52571e-24],
@@ -116,8 +126,8 @@ def H_6():
                                                 [119.9, 5.01078e-25],
                                                 [110.1, 3.8798e-25],
                                                 [109.9, 3.8586999999999997e-25],
-                                                [91.2, 2.20512e-25]]),
-        ExplicitContinuum(j=5, i=2, alphaGrid=[[820.57, 2.18e-23],
+                                                [91.2, 2.20512e-25]])),
+        ExplicitContinuum(j=5, i=2, **convert_alphaGrid(alphaGrid=[[820.57, 2.18e-23],
                                                 [780.0, 1.8723799999999998e-23],
                                                 [740.0, 1.5988399999999998e-23],
                                                 [700.0, 1.3533299999999999e-23],
@@ -132,19 +142,19 @@ def H_6():
                                                 [417.0, 2.8609999999999998e-24],
                                                 [400.0, 2.52516e-24],
                                                 [387.0, 2.28687e-24],
-                                                [364.71, 1.9140499999999999e-24]]),
-        ExplicitContinuum(j=5, i=3, alphaGrid=[[1442.2, 2.91e-23],
+                                                [364.71, 1.9140499999999999e-24]])),
+        ExplicitContinuum(j=5, i=3, **convert_alphaGrid(alphaGrid=[[1442.2, 2.91e-23],
                                                 [1350.0, 2.38681e-23],
                                                 [1215.0, 1.7399799999999997e-23],
                                                 [1000.0, 9.700999999999998e-24],
                                                 [876.0, 6.52122e-24],
-                                                [820.6, 5.36057e-24]]),
-        ExplicitContinuum(j=5, i=4, alphaGrid=[[2239.2, 3.63e-23],
+                                                [820.6, 5.36057e-24]])),
+        ExplicitContinuum(j=5, i=4, **convert_alphaGrid(alphaGrid=[[2239.2, 3.63e-23],
                                                 [2090.0, 2.95166e-23],
                                                 [1730.0, 1.67404e-23],
                                                 [1670.0, 1.5058299999999998e-23],
                                                 [1540.0, 1.1808399999999999e-23],
-                                                [1442.3, 9.700509999999999e-24]])
+                                                [1442.3, 9.700509999999999e-24]]))
     ],
     collisions=[
         Omega(j=1, i=0, temperature=[1000.0, 3000.0, 6000.0, 12000.0, 24000.0, 48000.0, 96000.0, 192000.0, 2000000.0, 5000000.0, 10000000.0, 30000000.0, 50000000.0], rates=[0.61, 0.613, 0.63, 0.686, 0.847, 1.24, 2.02, 3.58, 163.0, 163.0, 163.0, 163.0, 163.0]),
@@ -167,8 +177,8 @@ def H_6():
 
     H = H_6_radyn()
     for c in H.continua:
-        for lamAlpha in c.alphaGrid:
-            lamAlpha[1] *= 1e2
+        for i, a in enumerate(c.alphaGrid):
+            c.alphaGrid[i] *= 1e2
     # for l in H.lines:
     #     l.NlambdaGen *= 2
     # H.collisions.append(FangHRates(0,0))
@@ -187,7 +197,7 @@ def H_6_nasa():
     qNormRatio = radynQNorm / lw.VMICRO_CHAR
     qr = qNormRatio
     H_6_radyn_nasa = lambda: \
-    AtomicModel(name="H",
+    AtomicModel(element=lw.PeriodicTable["H"],
     levels=[
         AtomicLevel(E=0.000000, g=2.000000, label="H I 1S 2SE", stage=0, J=Fraction(1, 2), L=0, S=Fraction(1, 2)),
         AtomicLevel(E=82257.172000, g=8.000000, label="H I 2P 2PO", stage=0, J=Fraction(7, 2), L=1, S=Fraction(1, 2)),
@@ -197,16 +207,16 @@ def H_6_nasa():
         AtomicLevel(E=109754.578000, g=1.000000, label="H II continuum", stage=1, J=None, L=None, S=None),
     ],
     lines=[
-        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.CRD, NlambdaGen=100, qCore=10.000000*qr, qWing=10.000000*qr, vdw=VdwRadyn(vals=[1.0]), gRad=4.702e8, stark=0.0),
-        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.CRD, NlambdaGen=50, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=9.991e7, stark=0.0),
-        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, NlambdaGen=31, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=3.021e7, stark=0.0),
-        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, NlambdaGen=31, qCore=10.000000*qr, qWing=10.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=1.156e7, stark=0.0),
-        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, NlambdaGen=70, qCore=3.000000*qr, qWing=200.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=5.701e+8, stark=0.0),
-        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, NlambdaGen=40, qCore=3.000000*qr, qWing=200.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=5.004e+08, stark=0.0),
-        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, NlambdaGen=40, qCore=3.000000*qr, qWing=400.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=4.818e+08, stark=0.0),
-        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, NlambdaGen=31, qCore=2.000000*qr, qWing=100.000000*qr,  vdw=VdwRadyn(vals=[1.0]), gRad=1.301e+08, stark=0.0),
-        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, NlambdaGen=31, qCore=2.000000*qr, qWing=50.000000*qr,   vdw=VdwRadyn(vals=[1.0]), gRad=1.115e+08, stark=0.000000),
-        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=31, qCore=1.000000*qr, qWing=50.000000*qr,   vdw=VdwRadyn(vals=[1.0]), gRad=4.177e+07, stark=0.000000),
+        VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=100, qCore=10.000000*qr, qWing=10.000000*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=4.702e8)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=50, qCore=10.000000*qr, qWing=10.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=9.991e7)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=0, f=2.901000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=31, qCore=10.000000*qr, qWing=10.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=3.021e7)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=0, f=1.395000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=31, qCore=10.000000*qr, qWing=10.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.156e7)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=2, i=1, f=6.414000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=70, qCore=3.000000*qr, qWing=200.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=5.701e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=1, f=1.195000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=3.000000*qr, qWing=200.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=5.004e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=1, f=4.471000e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=40, qCore=3.000000*qr, qWing=400.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=4.818e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=3, i=2, f=8.431000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=31, qCore=2.000000*qr, qWing=100.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.301e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=2, f=1.508000e-01, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=31, qCore=2.000000*qr, qWing=50.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.115e+08)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
+        VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=31, qCore=1.000000*qr, qWing=50.000000*qr),  broadening=LineBroadening(natural=[RadiativeBroadening(gamma=4.177e+07)], elastic=[VdwRadyn(vals=[1.0]), HydrogenLinearStarkBroadening()])),
         # NOTE(cmo): I don't believe RADYN does both linear and quadratic Stark broadening for H, so setting Stark to these numbers seems to make the lines overly wide
         # VoigtLine(j=1, i=0, f=4.167000e-01, type=LineType.PRD, NlambdaGen=100, qCore=15.000000, qWing=600.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
         # VoigtLine(j=2, i=0, f=7.919000e-02, type=LineType.PRD, NlambdaGen=50, qCore=10.000000, qWing=250.000000, vdw=VdwUnsold(vals=[0.0, 0.0]), gRad=0.0, stark=0.0),
@@ -220,14 +230,14 @@ def H_6_nasa():
         # VoigtLine(j=4, i=3, f=1.039000e+00, type=LineType.CRD, NlambdaGen=20, qCore=1.000000, qWing=30.000000, vdw=VdwUnsold(vals=[1.0, 1.0]), gRad=4.177e+07, stark=0.000000),
     ],
     continua=[
-        ExplicitContinuum(j=5, i=0, alphaGrid=[[91.17, 6.538849999999999e-24],
+        ExplicitContinuum(j=5, i=0, **convert_alphaGrid(alphaGrid=[[91.17, 6.538849999999999e-24],
                                                 [85.0, 5.299099999999999e-24],
                                                 [80.0, 4.41789e-24],
                                                 [75.0, 3.64023e-24],
                                                 [70.0, 2.95964e-24],
                                                 [60.0, 1.8638e-24],
-                                                [50.5, 1.1112699999999999e-24]]),
-        ExplicitContinuum(j=5, i=1, alphaGrid=[[364.69, 1.41e-23],
+                                                [50.5, 1.1112699999999999e-24]])),
+        ExplicitContinuum(j=5, i=1, **convert_alphaGrid(alphaGrid=[[364.69, 1.41e-23],
                                                 [355.0, 1.3005699999999999e-23],
                                                 [340.0, 1.14257e-23],
                                                 [320.0, 9.52571e-24],
@@ -256,8 +266,8 @@ def H_6_nasa():
                                                 [119.9, 5.01078e-25],
                                                 [110.1, 3.8798e-25],
                                                 [109.9, 3.8586999999999997e-25],
-                                                [91.2, 2.20512e-25]]),
-        ExplicitContinuum(j=5, i=2, alphaGrid=[[820.57, 2.18e-23],
+                                                [91.2, 2.20512e-25]])),
+        ExplicitContinuum(j=5, i=2, **convert_alphaGrid(alphaGrid=[[820.57, 2.18e-23],
                                                 [780.0, 1.8723799999999998e-23],
                                                 [740.0, 1.5988399999999998e-23],
                                                 [700.0, 1.3533299999999999e-23],
@@ -272,19 +282,19 @@ def H_6_nasa():
                                                 [417.0, 2.8609999999999998e-24],
                                                 [400.0, 2.52516e-24],
                                                 [387.0, 2.28687e-24],
-                                                [364.71, 1.9140499999999999e-24]]),
-        ExplicitContinuum(j=5, i=3, alphaGrid=[[1442.2, 2.91e-23],
+                                                [364.71, 1.9140499999999999e-24]])),
+        ExplicitContinuum(j=5, i=3, **convert_alphaGrid(alphaGrid=[[1442.2, 2.91e-23],
                                                 [1350.0, 2.38681e-23],
                                                 [1215.0, 1.7399799999999997e-23],
                                                 [1000.0, 9.700999999999998e-24],
                                                 [876.0, 6.52122e-24],
-                                                [820.6, 5.36057e-24]]),
-        ExplicitContinuum(j=5, i=4, alphaGrid=[[2239.2, 3.63e-23],
+                                                [820.6, 5.36057e-24]])),
+        ExplicitContinuum(j=5, i=4, **convert_alphaGrid(alphaGrid=[[2239.2, 3.63e-23],
                                                 [2090.0, 2.95166e-23],
                                                 [1730.0, 1.67404e-23],
                                                 [1670.0, 1.5058299999999998e-23],
                                                 [1540.0, 1.1808399999999999e-23],
-                                                [1442.3, 9.700509999999999e-24]])
+                                                [1442.3, 9.700509999999999e-24]]))
     ],
     collisions=[
         Omega(j=1, i=0, temperature=[1000.0, 3000.0, 6000.0, 12000.0, 24000.0, 48000.0, 96000.0, 192000.0, 2000000.0, 5000000.0, 10000000.0, 30000000.0, 50000000.0], rates=[0.61, 0.613, 0.63, 0.686, 0.847, 1.24, 2.02, 3.58, 163.0, 163.0, 163.0, 163.0, 163.0]),
@@ -307,8 +317,8 @@ def H_6_nasa():
 
     H = H_6_radyn_nasa()
     for c in H.continua:
-        for lamAlpha in c.alphaGrid:
-            lamAlpha[1] *= 1e2
+        for i, a in enumerate(c.alphaGrid):
+            c.alphaGrid[i] *= 1e2
     # for l in H.lines:
     #     l.NlambdaGen *= 2
     # H.collisions.append(FangHRates(0,0))
@@ -423,7 +433,7 @@ class Shull82(CollisionalRates):
 
 def CaII():
     CaII_radyn = lambda: \
-    AtomicModel(name="CA",
+    AtomicModel(element=lw.PeriodicTable['Ca'],
     levels=[
         AtomicLevel(E=0.000000, g=2.000000, label="CA II 3P6 4S 2SE", stage=1, J=Fraction(1, 2), L=0, S=Fraction(1, 2)),
         AtomicLevel(E=13650.248000, g=4.000000, label="CA II 3P6 3D 2DE 3", stage=1, J=Fraction(3, 2), L=2, S=Fraction(1, 2)),
@@ -433,14 +443,14 @@ def CaII():
         AtomicLevel(E=95751.870000, g=1.000000, label="CA III 3P6 1SE", stage=2, J=Fraction(0, 1), L=0, S=Fraction(0, 1)),
     ],
     lines=[
-        VoigtLine(j=3, i=0, f=3.16000e-01, type=LineType.PRD, NlambdaGen=80, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.62]), gRad=1.420000e+08, stark=5.458e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=0, f=6.37000e-01, type=LineType.PRD, NlambdaGen=80, qCore=30.000000, qWing=1500.000000, vdw=VdwRadyn(vals=[1.61]), gRad=1.46e+08, stark=5.41e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=3, i=1, f=4.73e-02, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.04]), gRad=1.42e+08, stark=2.673e-7*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=1, f=9.60e-3, type=LineType.CRD, NlambdaGen=80, qCore=10.000000, qWing=150.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=2, f=5.74e-02, type=LineType.CRD, NlambdaGen=100, qCore=10.000000, qWing=200.000000, vdw=VdwRadyn(vals=[2.01]), gRad=1.46e+08, stark=3e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=3, i=0, f=3.16e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda= 80, qCore=30.000000, qWing=1500.00000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.42e+08)], elastic=[MultiplicativeStarkBroadening(5.458e-7*Const.CM_TO_M**3), VdwRadyn(vals=[1.62])])),
+        VoigtLine(j=4, i=0, f=6.37e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda= 80, qCore=30.000000, qWing=1500.00000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.46e+08)], elastic=[MultiplicativeStarkBroadening(5.410e-7*Const.CM_TO_M**3), VdwRadyn(vals=[1.61])])),
+        VoigtLine(j=3, i=1, f=4.73e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda= 80, qCore=10.000000, qWing=200.000000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.42e+08)], elastic=[MultiplicativeStarkBroadening(2.673e-7*Const.CM_TO_M**3), VdwRadyn(vals=[2.04])])),
+        VoigtLine(j=4, i=1, f=9.60e-03, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda= 80, qCore=10.000000, qWing=150.000000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.46e+08)], elastic=[MultiplicativeStarkBroadening(3.000e-6*Const.CM_TO_M**3), VdwRadyn(vals=[2.01])])),
+        VoigtLine(j=4, i=2, f=5.74e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=100, qCore=10.000000, qWing=200.000000), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.46e+08)], elastic=[MultiplicativeStarkBroadening(3.000e-6*Const.CM_TO_M**3), VdwRadyn(vals=[2.01])])),
     ],
     continua=[
-        ExplicitContinuum(j=5, i=0, alphaGrid=[[103.7, 3.74e-25],
+        ExplicitContinuum(j=5, i=0, **convert_alphaGrid(alphaGrid=[[103.7, 3.74e-25],
                                                 [101.0, 3.46e-25],
                                                 [99.0, 3.26e-25],
                                                 [97.256, 3.09e-25],
@@ -463,8 +473,8 @@ def CaII():
                                                 [49.010000000000005, 3.95e-26],
                                                 [45.31, 3.12e-26],
                                                 [42.85, 2.64e-26],
-                                                [39.88, 2.13e-26]]),
-        ExplicitContinuum(j=5, i=1, alphaGrid=[[121.56700000000001, 6.819999999999999e-24],
+                                                [39.88, 2.13e-26]])),
+        ExplicitContinuum(j=5, i=1, **convert_alphaGrid(alphaGrid=[[121.56700000000001, 6.819999999999999e-24],
                                                 [120.1, 6.7e-24],
                                                 [119.9, 6.68e-24],
                                                 [118.0, 6.5299999999999995e-24],
@@ -495,8 +505,8 @@ def CaII():
                                                 [51.589999999999996, 4.63e-25],
                                                 [49.010000000000005, 3.98e-25],
                                                 [45.31, 3.15e-25],
-                                                [42.85, 2.6600000000000003e-25]]),
-        ExplicitContinuum(j=5, i=2, alphaGrid=[[121.56700000000001, 6.819999999999999e-24],
+                                                [42.85, 2.6600000000000003e-25]])),
+        ExplicitContinuum(j=5, i=2, **convert_alphaGrid(alphaGrid=[[121.56700000000001, 6.819999999999999e-24],
                                                 [120.1, 6.7e-24],
                                                 [119.9, 6.68e-24],
                                                 [118.0, 6.5299999999999995e-24],
@@ -527,8 +537,8 @@ def CaII():
                                                 [51.589999999999996, 4.63e-25],
                                                 [49.010000000000005, 3.98e-25],
                                                 [45.31, 3.15e-25],
-                                                [42.85, 2.6600000000000003e-25]]),
-        ExplicitContinuum(j=5, i=3, alphaGrid=[[140.277, 2.94e-24],
+                                                [42.85, 2.6600000000000003e-25]])),
+        ExplicitContinuum(j=5, i=3, **convert_alphaGrid(alphaGrid=[[140.277, 2.94e-24],
                                                 [139.375, 2.87e-24],
                                                 [138.0, 2.77e-24],
                                                 [136.0, 2.64e-24],
@@ -560,8 +570,8 @@ def CaII():
                                                 [51.589999999999996, 1.3399999999999999e-25],
                                                 [49.010000000000005, 1.14e-25],
                                                 [45.31, 9.05e-26],
-                                                [42.85, 7.66e-26]]),
-        ExplicitContinuum(j=5, i=4, alphaGrid=[[142.0, 3.0599999999999998e-24],
+                                                [42.85, 7.66e-26]])),
+        ExplicitContinuum(j=5, i=4, **convert_alphaGrid(alphaGrid=[[142.0, 3.0599999999999998e-24],
                                                 [140.277, 2.94e-24],
                                                 [138.0, 2.77e-24],
                                                 [136.0, 2.64e-24],
@@ -593,7 +603,7 @@ def CaII():
                                                 [51.589999999999996, 1.3399999999999999e-25],
                                                 [49.010000000000005, 1.14e-25],
                                                 [45.31, 9.05e-26],
-                                                [42.85, 7.66e-26]])
+                                                [42.85, 7.66e-26]]))
     ],
     collisions=[
         Omega(j=0, i=1, temperature=[1500.0, 2000.0, 3000.0, 5000.0, 8000.0, 10000.0, 15000.0, 18000.0, 20000.0, 25000.0, 28000.0, 30000.0, 35000.0, 38000.0, 50000.0, 100000.0, 200000.0, 400000.0, 800000.0, 1600000.0, 3200000.0, 6400000.0, 13000000.0], rates=[5.2, 5.1, 4.91, 4.58, 4.24, 4.05, 3.62, 3.43, 3.31, 3.07, 2.94, 2.85, 2.68, 2.61, 2.39, 1.94, 1.66, 1.5, 1.42, 1.37, 1.35, 1.34, 1.33]),
@@ -621,8 +631,8 @@ def CaII():
 
     Ca = CaII_radyn()
     for c in Ca.continua:
-        for lamAlpha in c.alphaGrid:
-            lamAlpha[1] *= 1e2
+        for i, a in enumerate(c.alphaGrid):
+            c.alphaGrid[i] *= 1e2
     # for l in Ca.lines:
     #     l.NlambdaGen *= 2
 
@@ -668,7 +678,7 @@ def CaII_nasa():
 
     tempGrid = [1000.0, 5e7]
     CaII_radyn_nasa = lambda: \
-    AtomicModel(name="CA",
+    AtomicModel(element=lw.PeriodicTable["Ca"],
     levels=[
         AtomicLevel(E=0.000000, g=2.000000, label="CA II 3P6 4S 2SE", stage=1, J=Fraction(1, 2), L=0, S=Fraction(1, 2)),
         AtomicLevel(E=13650.248000, g=4.000000, label="CA II 3P6 3D 2DE 3", stage=1, J=Fraction(3, 2), L=2, S=Fraction(1, 2)),
@@ -678,51 +688,51 @@ def CaII_nasa():
         AtomicLevel(E=95785.470000, g=1.000000, label="CA III 3P6 1SE", stage=2, J=Fraction(0, 1), L=0, S=Fraction(0, 1)),
     ],
     lines=[
-        VoigtLine(j=3, i=0, f=3.3000e-01, type=LineType.CRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.62]), gRad=1.48e+08, stark=3.0e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=0, f=6.6000e-01, type=LineType.CRD, NlambdaGen=101, qCore=3.0*qr, qWing=300.0*qr, vdw=VdwRadyn(vals=[1.61]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=3, i=1, f=4.42e-02, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.04]), gRad=1.48e+08, stark=3.0e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=1, f=8.830e-3, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.01]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
-        VoigtLine(j=4, i=2, f=5.3e-02, type=LineType.CRD, NlambdaGen=101, qCore=1.0*qr, qWing=150.0*qr, vdw=VdwRadyn(vals=[2.01]), gRad=1.50e+08, stark=3.0e-6*-Const.CM_TO_M**3),
+        VoigtLine(j=3, i=0, f=3.30e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=101, qCore=3.0*qr, qWing=300.0*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.48e+08)], elastic=[MultiplicativeStarkBroadening(3.0e-6*Const.CM_TO_M**3), VdwRadyn(vals=[.62])])),
+        VoigtLine(j=4, i=0, f=6.60e-01, type=LineType.PRD, quadrature=LinearCoreExpWings(Nlambda=101, qCore=3.0*qr, qWing=300.0*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.50e+08)], elastic=[MultiplicativeStarkBroadening(3.0e-6*Const.CM_TO_M**3), VdwRadyn(vals=[1.61])])),
+        VoigtLine(j=3, i=1, f=4.42e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=101, qCore=1.0*qr, qWing=150.0*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.48e+08)], elastic=[MultiplicativeStarkBroadening(3.0e-6*Const.CM_TO_M**3), VdwRadyn(vals=[2.04])])),
+        VoigtLine(j=4, i=1, f=8.83e-03, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=101, qCore=1.0*qr, qWing=150.0*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.50e+08)], elastic=[MultiplicativeStarkBroadening(3.0e-6*Const.CM_TO_M**3), VdwRadyn(vals=[2.01])])),
+        VoigtLine(j=4, i=2, f=5.30e-02, type=LineType.CRD, quadrature=LinearCoreExpWings(Nlambda=101, qCore=1.0*qr, qWing=150.0*qr), broadening=LineBroadening(natural=[RadiativeBroadening(gamma=1.50e+08)], elastic=[MultiplicativeStarkBroadening(3.0e-6*Const.CM_TO_M**3), VdwRadyn(vals=[2.01])])),
     ],
     continua=[
-        ExplicitContinuum(j=5, i=0, alphaGrid=[[104.42, 2.036e-23],
+        ExplicitContinuum(j=5, i=0, **convert_alphaGrid(alphaGrid=[[104.42, 2.036e-23],
                                                [91.2, 2.1400000000000003e-23],
                                                [91.17, 2.1400000000000003e-23],
                                                [85.0, 2.172e-23],
                                                [75.0, 2.103e-23],
-                                               [60.0, 1.82e-23]]),
-        ExplicitContinuum(j=5, i=1, alphaGrid=[[121.84, 6.148400000000001e-22],
+                                               [60.0, 1.82e-23]])),
+        ExplicitContinuum(j=5, i=1, **convert_alphaGrid(alphaGrid=[[121.84, 6.148400000000001e-22],
                                                [115.0, 5.9073e-22],
                                                [104.42, 5.5114e-22],
                                                [91.2, 4.8267999999999995e-22],
                                                [91.17, 4.8267999999999995e-22],
                                                [80.0, 4.315e-22],
                                                [70.0, 3.7619e-22],
-                                               [60.0, 3.1682e-22]]),
-        ExplicitContinuum(j=5, i=2, alphaGrid=[[121.84, 6.148400000000001e-22],
+                                               [60.0, 3.1682e-22]])),
+        ExplicitContinuum(j=5, i=2, **convert_alphaGrid(alphaGrid=[[121.84, 6.148400000000001e-22],
                                                [115.0, 5.9073e-22],
                                                [104.42, 5.5114e-22],
                                                [91.2, 4.8267999999999995e-22],
                                                [91.17, 4.8267999999999995e-22],
                                                [80.0, 4.315e-22],
                                                [70.0, 3.7619e-22],
-                                               [60.0, 3.1682e-22]]),
-        ExplicitContinuum(j=5, i=3, alphaGrid=[[141.99, 2.3823e-22],
+                                               [60.0, 3.1682e-22]])),
+        ExplicitContinuum(j=5, i=3, **convert_alphaGrid(alphaGrid=[[141.99, 2.3823e-22],
                                                [130.0, 1.7407e-22],
                                                [121.84, 1.3031000000000001e-22],
                                                [115.0, 9.465e-23],
                                                [104.42, 6.630900000000001e-23],
                                                [91.2, 4.4507e-23],
                                                [91.17, 4.4507e-23],
-                                               [80.0, 2.8438e-23]]),
-        ExplicitContinuum(j=5, i=4, alphaGrid=[[141.99, 2.3823e-22],
+                                               [80.0, 2.8438e-23]])),
+        ExplicitContinuum(j=5, i=4, **convert_alphaGrid(alphaGrid=[[141.99, 2.3823e-22],
                                                [130.0, 1.7407e-22],
                                                [121.84, 1.3031000000000001e-22],
                                                [115.0, 9.465e-23],
                                                [104.42, 6.630900000000001e-23],
                                                [91.2, 4.4507e-23],
                                                [91.17, 4.4507e-23],
-                                               [80.0, 2.8438e-23]])
+                                               [80.0, 2.8438e-23]]))
     ],
     collisions=[
         Omega(j=0, i=1, temperature=tempGrid, rates=[5.6, 5.6]),
@@ -756,15 +766,15 @@ def CaII_nasa():
                 # Ca.lines[r['lwIdx']].preserveWavelength = True
     return Ca
 
-def He_9():
-    He = He_9_atom()
-    for l in He.lines:
-        l.NlambdaGen //= 2
+# def He_9():
+#     He = He_9_atom()
+#     for l in He.lines:
+#         l.NlambdaGen //= 2
 
-    reconfigure_atom(He)
-    # for r in radTrans:
-    #     if r['atomName'] == He.name:
-    #         if r['transType'] == 'Line':
-    #             He.lines[r['lwIdx']].wavelength = r['wlGrid'].value
-    #             He.lines[r['lwIdx']].preserveWavelength = True
-    return He
+#     reconfigure_atom(He)
+#     # for r in radTrans:
+#     #     if r['atomName'] == He.name:
+#     #         if r['transType'] == 'Line':
+#     #             He.lines[r['lwIdx']].wavelength = r['wlGrid'].value
+#     #             He.lines[r['lwIdx']].preserveWavelength = True
+#     return He

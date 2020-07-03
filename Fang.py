@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
-from lightweaver.atomic_model import CollisionalRates
+from lightweaver.collisional_rates import CollisionalRates
 
 @dataclass
 class FangH:
