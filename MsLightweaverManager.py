@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from lightweaver.rh_atoms import H_6_atom, C_atom, O_atom, OI_ord_atom, Si_atom, Al_atom, Fe_atom, FeI_atom, MgII_atom, N_atom, Na_atom, S_atom, CaII_atom
 from lightweaver.atmosphere import Atmosphere, ScaleType
+from lightweaver.atomic_table import DefaultAtomicAbundance
 from lightweaver.atomic_set import RadiativeSet, SpeciesStateTable
-from lightweaver.atomic_table import get_global_atomic_table
 from lightweaver.molecule import MolecularTable
 from lightweaver.LwCompiled import LwContext
 from lightweaver.utils import InitialSolution, planck, NgOptions, ConvergenceError
@@ -12,21 +12,20 @@ import lightweaver.constants as Const
 import lightweaver as lw
 from typing import List
 from copy import deepcopy
-from MsLightweaverAtoms import H_6, CaII, He_9, H_6_nasa, CaII_nasa
+from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa
 import os
 import os.path as path
 import time
-from notify_run import Notify
 from radynpy.matsplotlib import OpcFile
 from radynpy.utils import hydrogen_absorption
 from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
 from scipy.interpolate import interp1d, PchipInterpolator
-from HydroWeno.Simulation import Grid
-from HydroWeno.Advector import Advector
-from HydroWeno.BCs import zero_grad_bc
-from HydroWeno.Weno import reconstruct_weno_nm_z
+# from HydroWeno.Simulation import Grid
+# from HydroWeno.Advector import Advector
+# from HydroWeno.BCs import zero_grad_bc
+# from HydroWeno.Weno import reconstruct_weno_nm_z
 import warnings
 from traceback import print_stack
 from weno4 import weno4
@@ -62,13 +61,13 @@ def check_write_git_revision(outputDir):
     with open(outputDir + 'GitRevision.txt', 'w') as f:
         f.write(revision)
 
-def nr_advect(atmost, i0, eqPops, activeAtomNames, atomicTable):
+def nr_advect(atmost, i0, eqPops, activeAtomNames, abundances):
     d1 = atmost.d1[i0+1]
     for a in activeAtomNames:
         pop = np.zeros_like(eqPops[a])
         for i in range(pop.shape[0]):
             pop[i, :] = an_sol(atmost, i0, eqPops[a][i], tol=1e-8, maxIter=1000)
-        nTotal = d1 / (atomicTable.weightPerH * lw.Amu) * atomicTable[a].abundance
+        nTotal = d1 / (abundances.massPerH * lw.Amu) * abundances[a]
         popCorrectionFactor = nTotal / pop.sum(axis=0)
         print('Max Correction %s: %.2e' % (a, np.abs(1-popCorrectionFactor).max()))
         pop *= popCorrectionFactor
@@ -113,9 +112,9 @@ class MsLightweaverManager:
         self.atmost = atmost
         self.outputDir = outputDir
         self.conserveCharge = conserveCharge
-        self.at = get_global_atomic_table()
+        self.abund = DefaultAtomicAbundance
         self.idx = 0
-        self.nHTot = atmost.d1 / (self.at.weightPerH * Const.Amu)
+        self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
         if populationTransportMode == 'Advect':
             self.advectPops = True
@@ -138,9 +137,9 @@ class MsLightweaverManager:
             self.eqPops = args['eqPops']
         else:
             nHTot = np.copy(self.nHTot[0])
-            self.atmos = Atmosphere(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
+            self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
 
-            self.atmos.convert_scales()
+            # self.atmos.convert_scales()
             self.atmos.quadrature(5)
 
             self.aSet = RadiativeSet(atoms)
@@ -231,7 +230,7 @@ class MsLightweaverManager:
             neAdv = self.atmos.ne * adv
             self.atmos.ne[:] = neAdv
             for atom in self.aSet.activeAtoms:
-                p = self.eqPops[atom.name]
+                p = self.eqPops[atom.element]
                 for i in range(p.shape[0]):
                     pAdv = p[i] * adv
                     p[i, :] = pAdv
@@ -258,7 +257,7 @@ class MsLightweaverManager:
             #     p *= nTotalAdv / p.sum(axis=0)
 
             # advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
-            nr_advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
+            nr_advect(self.atmost, self.idx, self.eqPops, [a.element for a in self.aSet.activeAtoms], self.abund)
             # pass
 
             # NOTE(cmo): Guess advected n_e. Will be corrected to be self
@@ -335,7 +334,7 @@ class MsLightweaverManager:
                                              atom.n, prevState['pops'][i])
 
             maxDelta = max(maxDelta, atomDelta)
-            s = '    %s delta = %6.4e' % (atom.atomicModel.name, atomDelta)
+            s = '    %s delta = %6.4e' % (atom.atomicModel.element, atomDelta)
             print(s)
 
         return maxDelta
@@ -531,5 +530,5 @@ def convert_atomic_pops(atom):
 def distill_pops(eqPops):
     d = {}
     for atom in eqPops.atomicPops:
-        d[atom.name] = convert_atomic_pops(atom)
+        d[atom.element.name] = convert_atomic_pops(atom)
     return d

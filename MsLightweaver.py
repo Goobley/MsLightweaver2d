@@ -1,27 +1,27 @@
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
-from lightweaver.rh_atoms import H_6_atom, C_atom, O_atom, OI_ord_atom, Si_atom, Al_atom, Fe_atom, FeI_atom, MgII_atom, N_atom, Na_atom, S_atom, CaII_atom
+from lightweaver.rh_atoms import H_6_atom, C_atom, O_atom, OI_ord_atom, Si_atom, Al_atom, Fe_atom, FeI_atom, MgII_atom, N_atom, Na_atom, S_atom, CaII_atom, He_9_atom
 import lightweaver as lw
-from MsLightweaverAtoms import H_6, CaII, He_9, H_6_nasa, CaII_nasa
+from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa
 from pathlib import Path
 import os
 import os.path as path
 import time
-from notify_run import Notify
+# from notify_run import Notify
 from MsLightweaverManager import MsLightweaverManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 from ReadAtmost import read_atmost
-from threadpoolctl import threadpool_limits
-threadpool_limits(1)
+# from threadpoolctl import threadpool_limits
+# threadpool_limits(1)
 
-OutputDir = 'TimestepsAdvNrNoShullCdi/'
+OutputDir = 'TimestepsAdvNr/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
-NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
-FchromaAtoms = [H_6(), CaII(), He_9(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+FchromaAtoms = [H_6(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
 AtomSet = FchromaAtoms
 ConserveCharge = True
@@ -30,7 +30,7 @@ Prd = False
 
 test_timesteps_in_dir(OutputDir)
 
-atmost = read_atmost('atmost.dat')
+atmost = read_atmost('atmost_cmo.dat')
 atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
     atmost.bheat1 = np.load('BheatInterp.npy')
@@ -78,6 +78,6 @@ for i in range(firstStep, maxSteps):
 end = time.time()
 print('Total time taken %.4e' % (end - start))
 
-notify = Notify()
-notify.read_config()
-notify.send('MsLightweaver done!')
+# notify = Notify()
+# notify.read_config()
+# notify.send('MsLightweaver done!')

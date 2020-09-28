@@ -32,7 +32,7 @@ class FangHRates(CollisionalRates):
     def __repr__(self):
         return 'FangHRates(0,0)'
 
-    def compute_rates(self, atmos, nstar, Cmat):
+    def compute_rates(self, atmos, eqPops, Cmat):
         neutralH = np.sum(atmos.hPops[:-1, :], axis=0) / 1e6 # in cm-3
         # bHeat is left in default units
         fangRates = fang_ele_rates_H(neutralH, atmos.ne / 1e6, atmos.bHeat)

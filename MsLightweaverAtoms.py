@@ -10,6 +10,7 @@ import lightweaver.constants as Const
 import pickle
 from dataclasses import dataclass
 import numpy as np
+from weno4 import weno4
         # tg = atmos.temperature
 
 @dataclass(eq=False, repr=False)
@@ -351,7 +352,7 @@ class Ar85CeaCaII(CollisionalRates):
         s = 'Ar85CeaCaII(j=%d, i=%d, fudge=%e)' % (self.j, self.i, self.fudge)
         return s
 
-    def compute_rates(self, atmos, nstar, Cmat):
+    def compute_rates(self, atmos, eqPops, Cmat):
         # CaII is in the K isoelectronic sequence
         zz = 20
         kBT = Const.KBoltzmann * atmos.temperature / Const.EV
@@ -398,7 +399,8 @@ class Shull82(CollisionalRates):
         s = 'Shull82(row=%d, col=%d, aCol=%e, tCol=%e, aRad=%e, xRad=%e, aDi=%e, bDi=%e, t0=%e, t1=%e)' % (self.row, self.col, self.aCol, self.tCol, self.aRad, self.xRad, self.aDi, self.bDi, self.t0, self.t1)
         return s
 
-    def compute_rates(self, atmos, nstar, Cmat):
+    def compute_rates(self, atmos, eqPops, Cmat):
+        nstar = eqPops.atomicPops[self.atom.element].nStar
         # NOTE(cmo): Summers direct recombination rates
         zz = self.jLevel.stage
         rhoq = (atmos.ne * Const.CM_TO_M**3) / zz**7
@@ -661,11 +663,7 @@ class CH(TemperatureInterpolationRates):
         return s
 
     def compute_rates(self, atmos, nStar, Cmat):
-        try:
-            C = self.interpolator(atmos.temperature)
-        except AttributeError:
-            self.setup_interpolator()
-            C = self.interpolator(atmos.temperature)
+        C = weno4(atmos.temperature, self.temperature, self.rates)
 
         Cup = atmos.hPops[0, :] * C[:]
         Cmat[self.j, self.i, :] += Cup
