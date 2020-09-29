@@ -246,10 +246,13 @@ class MsLightweaverInterpManager:
     def compute_2d_bc_rays(self, muz, wmu):
         atmos = copy(self.atmos)
         atmos.rays(muz, wmu=2.0*wmu)
+        print('------')
+        print('ctxRays BC')
+        print('------')
         ctxRays = lw.Context(atmos, self.ctx.kwargs['spect'], self.ctx.eqPops, Nthreads=16)
         ctxRays.depthData.fill = True
         dJ = 1.0
-        while dJ > 1.0:
+        while dJ > 1.0e-3:
             dJ = ctxRays.formal_sol_gamma_matrices()
 
         return ctxRays.depthData.I

@@ -133,6 +133,7 @@ for i in range(firstStep, maxSteps):
         ctx.formal_sol_gamma_matrices()
     prevState = None
     for iter2d in range(1000):
+        ctx.formal_sol_gamma_matrices()
         dPops, prevState = ctx.time_dep_update(ms.atmost.dt[ms.idx+1], prevState)
         if dPops < 1e-3 and iter2d > 5:
             break
