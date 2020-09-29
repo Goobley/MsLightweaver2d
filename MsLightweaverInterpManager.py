@@ -147,7 +147,7 @@ class MsLightweaverInterpManager:
             else:
                 self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
 
-            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=12)
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=16)
 
         self.atmos.bHeat = np.ones(self.atmos.Nspace) * 1e-20
         self.atmos.hPops = self.eqPops['H']
@@ -246,7 +246,7 @@ class MsLightweaverInterpManager:
     def compute_2d_bc_rays(self, muz, wmu):
         atmos = copy(self.atmos)
         atmos.rays(muz, wmu=2.0*wmu)
-        ctxRays = lw.Context(atmos, self.ctx.kwargs['spect'], self.ctx.eqPops, Nthreads=12)
+        ctxRays = lw.Context(atmos, self.ctx.kwargs['spect'], self.ctx.eqPops, Nthreads=16)
         ctxRays.depthData.fill = True
         dJ = 1.0
         while dJ > 1.0:

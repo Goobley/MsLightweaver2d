@@ -38,7 +38,7 @@ class FixedXBc(lw.BoundaryCondition):
         # self.I = I1d.reshape(I1d.shape[0], -1, I1d.shape[-1])
         self.I = None
 
-    def set_bc(self, data):
+    def set_bc(self, I1d):
         self.I = I1d.reshape(I1d.shape[0], -1, I1d.shape[-1])
 
     def compute_bc(self, atmos, spect):
@@ -49,6 +49,12 @@ class FixedXBc(lw.BoundaryCondition):
             raise ValueError('I has not been set (x%sBc)' % self.mode)
         result = np.copy(self.I)
         return result
+
+def save_timestep_2d(ctx, idx):
+    with open(OutputDir + 'Step2d_%.6d.pickle' % idx, 'wb') as pkl:
+        Iwave = ctx.spect.I
+        J = ctx.spect.J
+        pickle.dump({'Iwave': Iwave, 'J': J}, pkl)
 
 test_timesteps_in_dir(OutputDir)
 
@@ -86,14 +92,14 @@ vturb = np.ones((Nz, Nx)) * 2e3
 nHTot = np.zeros((Nz, Nx))
 nHTot[...] = ms.atmos.nHTot[:, None]
 atmos2d = lw.Atmosphere.make_2d(height=ms.fixedZGrid, x=xAxis, temperature=temperature,
-                                vx=vx, vz=vz, vturb=vturb, nHTot=nHTot,
+                                ne=ne, vx=vx, vz=vz, vturb=vturb, nHTot=nHTot,
                                 xLowerBc=FixedXBc('lower'), xUpperBc=FixedXBc('upper'))
 eqPops2d = ms.aSet.compute_eq_pops(atmos2d)
 atmos2d.hPops = eqPops2d['H']
 atmos2d.bHeat = np.zeros(Nz * Nx)
 Nquad2d = 6
 atmos2d.quadrature(Nquad2d)
-ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=64)
+ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=16)
 # NOTE(cmo): Initial stat-eq in 2D atmosphere
 bcIntensity = ms.compute_2d_bc_rays(atmos2d.muz[:Nquad2d], atmos2d.wmu[:Nquad2d])
 atmos2d.xLowerBc.set_bc(bcIntensity)
@@ -105,6 +111,7 @@ for i in range(1000):
     dPops = ctx.stat_equil()
     if dPops < 1e-3 and i > 5:
         break
+save_timestep_2d(ctx, ms.idx)
 
 maxSteps = ms.atmost.time.shape[0] - 1
 ms.atmos.bHeat[:] = weno4(ms.fixedZGrid, ms.atmost.z1[0], ms.atmost.bheat1[0])
@@ -122,14 +129,14 @@ for i in range(firstStep, maxSteps):
     print('-------')
     print('1D BC Done')
     print('-------')
-    for i in range(2):
+    for backgroundIter in range(2):
         ctx.formal_sol_gamma_matrices()
     prevState = None
-    for i in range(1000):
-        ctx.time_dep_update()
+    for iter2d in range(1000):
         dPops, prevState = ctx.time_dep_update(ms.atmost.dt[ms.idx+1], prevState)
-        if dPops < 1e-3 and i > 5:
+        if dPops < 1e-3 and iter2d > 5:
             break
+    save_timestep_2d(ctx, ms.idx)
 
     stepEnd = time.time()
     print('-------')
