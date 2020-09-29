@@ -31,6 +31,7 @@ from traceback import print_stack
 from weno4 import weno4
 from RadynAdvection import an_sol, an_rad_sol, an_gml_sol
 import pdb
+from copy import copy
 
 def weno4_pos(xs, xp, fp, **kwargs):
     return np.exp(weno4_safe(xs, xp, np.log(fp), **kwargs))
@@ -95,12 +96,12 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
 
     return atomDelta
 
-class MsLightweaverManager:
+class MsLightweaverInterpManager:
 
     def __init__(self, atmost, outputDir,
-                 atoms, activeAtoms=['H', 'Ca'],
+                 fixedZGrid, atoms,
+                 activeAtoms=['H', 'Ca'],
                  startingCtx=None, conserveCharge=False,
-                 populationTransportMode='Advect',
                  prd=False):
         # check_write_git_revision(outputDir)
         self.atmost = atmost
@@ -110,17 +111,7 @@ class MsLightweaverManager:
         self.idx = 0
         self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
-        if populationTransportMode == 'Advect':
-            self.advectPops = True
-            self.rescalePops = False
-        elif populationTransportMode == 'Rescale':
-            self.advectPops = False
-            self.rescalePops = True
-        elif populationTransportMode is None or populationTransportMode == 'None':
-            self.advectPops = False
-            self.rescalePops = False
-        else:
-            raise ValueError('Unknown populationTransportMode: %s' % populationTransportMode)
+        self.fixedZGrid = fixedZGrid
 
         if startingCtx is not None:
             self.ctx = startingCtx
@@ -130,8 +121,13 @@ class MsLightweaverManager:
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
         else:
-            nHTot = np.copy(self.nHTot[0])
-            self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
+            temperature = weno4(self.fixedZGrid, atmost.z1[0], atmost.tg1[0])
+            vlos = weno4(self.fixedZGrid, atmost.z1[0], atmost.vz1[0])
+            vturb = np.ones_like(vlos) * 2e3
+            ne1 = weno4(self.fixedZGrid, atmost.z1[0], atmost.ne1[0])
+            nHTot = weno4(self.fixedZGrid, atmost.z1[0], self.nHTot[0])
+            self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(self.fixedZGrid), temperature=np.copy(temperature),
+                                            vlos=np.copy(vlos), vturb=np.copy(vturb), ne=np.copy(ne1), nHTot=nHTot)
 
             # self.atmos.convert_scales()
             self.atmos.quadrature(5)
@@ -153,51 +149,10 @@ class MsLightweaverManager:
 
             self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=12)
 
-        self.atmos.bHeat = np.ones_like(self.atmost.bheat1[0]) * 1e-20
+        self.atmos.bHeat = np.ones(self.atmos.Nspace) * 1e-20
         self.atmos.hPops = self.eqPops['H']
         np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
 
-        # NOTE(cmo): Set up background
-        # self.opc = OpcFile('opctab_cmo_mslw.dat')
-        # # self.opc = OpcFile()
-        # opcWvl = self.opc.wavel
-        # self.opcWvl = opcWvl
-        # # NOTE(cmo): Find mapping from wavelength array to opctab array, with
-        # # constant background over the region of each line. Are overlaps a
-        # # problem here? Probably -- but let's see the spectrum in practice
-        # # The record to be used is the one in self.wvlIdxs + 4 due to the data
-        # # layout in the opctab
-        # self.wvlIdxs = np.ones_like(self.spect.wavelength, dtype=np.int64) * -1
-        # lineCores = []
-        # for a in self.aSet.activeSet:
-        #     for l in a.lines:
-        #         lineCores.append(l.lambda0 * 10)
-        # lineCores = np.array(lineCores)
-        # lineCoreIdxs = np.zeros_like(lineCores)
-        # for i, l in enumerate(lineCores):
-        #     closestIdx = np.argmin(np.abs(opcWvl - l))
-        #     lineCoreIdxs[i] = closestIdx
-
-        # for a in self.aSet.activeSet:
-        #     for l in a.lines:
-        #         # closestIdx = np.argmin((opcWvl - l.lambda0*10)**2)
-        #         closestCore = np.argmin(np.abs((l.wavelength * 10)[:, None] - lineCores), axis=1)
-        #         closestIdx = lineCoreIdxs[closestCore]
-        #         sub = find_subarray(self.spect.wavelength, l.wavelength)
-        #         self.wvlIdxs[sub:sub + l.wavelength.shape[0]] = closestIdx
-        # for i, v in enumerate(self.wvlIdxs):
-        #     if v >= 0:
-        #         continue
-
-        #     closestIdx = np.argmin(np.abs(opcWvl - self.spect.wavelength[i]*10))
-        #     self.wvlIdxs[i] = closestIdx
-        # self.opctabIdxs = self.wvlIdxs + 4
-
-        # NOTE(cmo): Compute initial background opacity
-        # np.save('chi.npy', self.ctx.background.chi)
-        # np.save('eta.npy', self.ctx.background.eta)
-        # np.save('sca.npy', self.ctx.background.sca)
-        # self.opac_background()
 
     def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3):
         if self.prd:
@@ -218,49 +173,6 @@ class MsLightweaverManager:
         else:
             raise ConvergenceError('Stat Eq did not converge.')
 
-    def advect_pops(self):
-        if self.rescalePops:
-            adv = self.atmost.d1[self.idx+1] / self.atmost.d1[self.idx]
-            neAdv = self.atmos.ne * adv
-            self.atmos.ne[:] = neAdv
-            for atom in self.aSet.activeAtoms:
-                p = self.eqPops[atom.element]
-                for i in range(p.shape[0]):
-                    pAdv = p[i] * adv
-                    p[i, :] = pAdv
-        elif self.advectPops:
-            # z0 = self.atmost.z1[self.idx]
-            # z1 = self.atmost.z1[self.idx+1]
-            # d0 = self.atmost.d1[self.idx]
-            # d1 = self.atmost.d1[self.idx+1]
-            # vz0 = self.atmost.vz1[self.idx]
-            # vz1 = self.atmost.vz1[self.idx+1]
-            # dt = self.atmost.dt[self.idx+1]
-
-            # z0m = z0 + 0.5 * vz0 * dt
-            # z0Tracer = z0 + interp1d(z1, vz1, kind=3, fill_value='extrapolate')(z0m) * dt
-
-            # densityAdv = d1 / d0
-            # for atom in self.aSet.activeAtoms:
-            #     p = self.eqPops[atom.name]
-            #     for i in range(p.shape[0]):
-            #         p0 = p[i, :]
-            #         p[i, :] = 10**(interp1d(z0Tracer, np.log10(p0), kind=3, fill_value='extrapolate')(z1))
-            #     nTotal = self.eqPops.atomicPops[atom.name].nTotal
-            #     nTotalAdv = nTotal * densityAdv
-            #     p *= nTotalAdv / p.sum(axis=0)
-
-            # advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
-            nr_advect(self.atmost, self.idx, self.eqPops, [a.element for a in self.aSet.activeAtoms], self.abund)
-            # pass
-
-            # NOTE(cmo): Guess advected n_e. Will be corrected to be self
-            # consistent later (in update_deps if conserveCharge=True). If
-            # conserveCharge isn't true then we're using loaded n_e anyway
-            # neAdv = interp1d(z0Tracer, np.log10(self.atmos.ne), kind=3, fill_value='extrapolate')(z1)
-            # self.atmos.ne[:] = 10**neAdv
-
-
     def save_timestep(self):
         i = self.idx
         with open(self.outputDir + 'Step_%.6d.pickle' % i, 'wb') as pkl:
@@ -268,43 +180,41 @@ class MsLightweaverManager:
             Iwave = self.ctx.spect.I
             pickle.dump({'eqPops': eqPops, 'Iwave': Iwave, 'ne': self.atmos.ne}, pkl)
 
-    def load_timestep(self, stepNum):
-        with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
-            step = pickle.load(pkl)
+    # def load_timestep(self, stepNum):
+    #     with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
+    #         step = pickle.load(pkl)
 
-        self.idx = stepNum
-        self.atmos.temperature[:] = self.atmost.tg1[self.idx]
-        self.atmos.vlos[:] = self.atmost.vz1[self.idx]
-        if not self.conserveCharge:
-            self.atmos.ne[:] = self.atmost.ne1[self.idx]
+    #     self.idx = stepNum
+    #     self.atmos.temperature[:] = self.atmost.tg1[self.idx]
+    #     self.atmos.vlos[:] = self.atmost.vz1[self.idx]
+    #     if not self.conserveCharge:
+    #         self.atmos.ne[:] = self.atmost.ne1[self.idx]
 
-        if self.advectPops or self.rescalePops:
-            self.atmos.nHTot[:] = self.nHTot[self.idx]
-        self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
+    #     if self.advectPops or self.rescalePops:
+    #         self.atmos.nHTot[:] = self.nHTot[self.idx]
+    #     self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
-        self.atmos.height[:] = self.atmost.z1[self.idx]
+    #     self.atmos.height[:] = self.atmost.z1[self.idx]
 
-        for name, pops in step['eqPops'].items():
-            if pops['n'] is not None:
-                self.eqPops.atomicPops[name].pops[:] = pops['n']
-            self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
-        self.atmos.ne[:] = step['ne']
-        self.ctx.spect.I[:] = step['Iwave']
-        self.ctx.update_deps()
+    #     for name, pops in step['eqPops'].items():
+    #         if pops['n'] is not None:
+    #             self.eqPops.atomicPops[name].pops[:] = pops['n']
+    #         self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
+    #     self.atmos.ne[:] = step['ne']
+    #     self.ctx.spect.I[:] = step['Iwave']
+    #     self.ctx.update_deps()
 
     def increment_step(self):
-        self.advect_pops()
         self.idx += 1
-        self.atmos.temperature[:] = self.atmost.tg1[self.idx]
-        self.atmos.vlos[:] = self.atmost.vz1[self.idx]
+        self.atmos.temperature[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.tg1[self.idx])
+        self.atmos.vlos[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.vz1[self.idx])
         if not self.conserveCharge:
-            self.atmos.ne[:] = self.atmost.ne1[self.idx]
+            self.atmos.ne[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.ne1[self.idx])
 
-        if self.advectPops or self.rescalePops:
-            self.atmos.nHTot[:] = self.nHTot[self.idx]
-        self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
+        self.atmos.nHTot[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.nHTot[self.idx])
+        self.atmos.bHeat[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.bheat1[self.idx])
 
-        self.atmos.height[:] = self.atmost.z1[self.idx]
+        # self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
         if self.prd:
             self.ctx.configure_hprd_coeffs()
@@ -332,6 +242,18 @@ class MsLightweaverManager:
             print(s)
 
         return maxDelta
+
+    def compute_2d_bc_rays(self, muz, wmu):
+        atmos = copy(self.atmos)
+        atmos.rays(muz, wmu=2.0*wmu)
+        ctxRays = lw.Context(atmos, self.ctx.kwargs['spect'], self.ctx.eqPops, Nthreads=12)
+        ctxRays.depthData.fill = True
+        dJ = 1.0
+        while dJ > 1.0:
+            dJ = ctxRays.formal_sol_gamma_matrices()
+
+        return ctxRays.depthData.I
+
 
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=1.0, dt=None):
         dt = dt if dt is not None else self.atmost.dt[self.idx+1]
