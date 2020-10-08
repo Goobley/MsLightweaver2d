@@ -22,20 +22,11 @@ from numba import njit
 from pathlib import Path
 from scipy.linalg import solve
 from scipy.interpolate import interp1d, PchipInterpolator
-# from HydroWeno.Simulation import Grid
-# from HydroWeno.Advector import Advector
-# from HydroWeno.BCs import zero_grad_bc
-# from HydroWeno.Weno import reconstruct_weno_nm_z
 import warnings
-from traceback import print_stack
 from weno4 import weno4
-from RadynAdvection import an_sol, an_rad_sol, an_gml_sol
 import pdb
 from copy import copy
-
-def weno4_pos(xs, xp, fp, **kwargs):
-    return np.exp(weno4_safe(xs, xp, np.log(fp), **kwargs))
-
+import zarr
 
 # https://stackoverflow.com/a/21901260
 import subprocess
@@ -55,18 +46,6 @@ def check_write_git_revision(outputDir):
     revision = mslightweaver_revision()
     with open(outputDir + 'GitRevision.txt', 'w') as f:
         f.write(revision)
-
-def nr_advect(atmost, i0, eqPops, activeAtomNames, abundances):
-    d1 = atmost.d1[i0+1]
-    for a in activeAtomNames:
-        pop = np.zeros_like(eqPops[a])
-        for i in range(pop.shape[0]):
-            pop[i, :] = an_sol(atmost, i0, eqPops[a][i], tol=1e-8, maxIter=1000)
-        nTotal = d1 / (abundances.massPerH * lw.Amu) * abundances[a]
-        popCorrectionFactor = nTotal / pop.sum(axis=0)
-        print('Max Correction %s: %.2e' % (a, np.abs(1-popCorrectionFactor).max()))
-        pop *= popCorrectionFactor
-        eqPops[a][...] = pop
 
 @njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
@@ -97,12 +76,11 @@ def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     return atomDelta
 
 class MsLightweaverInterpManager:
-
     def __init__(self, atmost, outputDir,
                  fixedZGrid, atoms,
                  activeAtoms=['H', 'Ca'],
                  startingCtx=None, conserveCharge=False,
-                 prd=False):
+                 prd=False, Nthreads=16):
         # check_write_git_revision(outputDir)
         self.atmost = atmost
         self.outputDir = outputDir
@@ -112,14 +90,20 @@ class MsLightweaverInterpManager:
         self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
         self.fixedZGrid = fixedZGrid
+        self.Nthreads = Nthreads
 
+        self.zarrStore = zarr.convenience.open(outputDir + 'MsLw1dFixed.zarr')
         if startingCtx is not None:
             self.ctx = startingCtx
-            args = startingCtx.arguments
+            args = startingCtx.kwargs
             self.atmos = args['atmos']
             self.spect = args['spect']
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
+            self.nltePopsStore = self.zarrStore['SimOutput/Populations/NLTE']
+            self.ltePopsStore = self.zarrStore['SimOutput/Populations/LTE']
+            self.radStore = self.zarrStore['SimOutput/Radiation']
+            self.neStore = self.zarrStore['SimOutput/ne']
         else:
             temperature = weno4(self.fixedZGrid, atmost.z1[0], atmost.tg1[0])
             vlos = weno4(self.fixedZGrid, atmost.z1[0], atmost.vz1[0])
@@ -129,32 +113,43 @@ class MsLightweaverInterpManager:
             self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(self.fixedZGrid), temperature=np.copy(temperature),
                                             vlos=np.copy(vlos), vturb=np.copy(vturb), ne=np.copy(ne1), nHTot=nHTot)
 
-            # self.atmos.convert_scales()
             self.atmos.quadrature(5)
 
             self.aSet = RadiativeSet(atoms)
             self.aSet.set_active(*activeAtoms)
-            # NOTE(cmo): Radyn seems to compute the collisional rates once per
-            # timestep(?) and we seem to get a much better agreement for Ca
-            # with the CH rates when H is set to LTE for the initial timestep.
-            # Might be a bug in my implementation though.
 
             self.spect = self.aSet.compute_wavelength_grid()
 
-            self.mols = MolecularTable()
             if self.conserveCharge:
-                self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.atmos, self.mols)
+                self.eqPops = self.aSet.iterate_lte_ne_eq_pops(self.atmos)
             else:
-                self.eqPops = self.aSet.compute_eq_pops(self.atmos, self.mols)
+                self.eqPops = self.aSet.compute_eq_pops(self.atmos)
 
-            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=16)
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=self.Nthreads)
+            simOut = self.zarrStore.require_group('SimOutput')
+            pops = simOut.require_group('Populations')
+            self.nltePopsStore = pops.require_group('NLTE')
+            self.ltePopsStore = pops.require_group('LTE')
+            self.radStore = simOut.require_group('Radiation')
+            simParams = self.zarrStore.require_group('SimParams')
+            simParams['wavelength'] = self.ctx.spect.wavelength
+            simParams['zGrid'] = self.fixedZGrid
+
+            self.radStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
+            self.radStore['I'] = np.expand_dims(self.ctx.spect.I, 0)
+            for atom in self.eqPops.atomicPops:
+                if atom.pops is not None:
+                    self.ltePopsStore[atom.element.name] = np.expand_dims(atom.nStar, 0)
+                    self.nltePopsStore[atom.element.name] = np.expand_dims(atom.pops, 0)
+            simOut['ne'] = np.expand_dims(self.atmos.ne, 0)
+            self.neStore = simOut['ne']
 
         self.atmos.bHeat = np.ones(self.atmos.Nspace) * 1e-20
         self.atmos.hPops = self.eqPops['H']
-        np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
 
 
-    def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3):
+    def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3,
+                        overwritePops=True):
         if self.prd:
             self.ctx.configure_hprd_coeffs()
 
@@ -173,52 +168,71 @@ class MsLightweaverInterpManager:
         else:
             raise ConvergenceError('Stat Eq did not converge.')
 
+        if overwritePops:
+            # NOTE(cmo): Overwrite the initial versions of these
+            for atom in self.eqPops.atomicPops:
+                if atom.pops is not None:
+                    self.nltePopsStore[atom.element.name][0, ...] = atom.pops
+            self.neStore[0, :] = self.atmos.ne
+
     def save_timestep(self):
-        i = self.idx
-        with open(self.outputDir + 'Step_%.6d.pickle' % i, 'wb') as pkl:
-            eqPops = distill_pops(self.eqPops)
-            Iwave = self.ctx.spect.I
-            pickle.dump({'eqPops': eqPops, 'Iwave': Iwave, 'ne': self.atmos.ne}, pkl)
+        self.radStore['J'].append(np.expand_dims(self.ctx.spect.J, 0))
+        self.radStore['I'].append(np.expand_dims(self.ctx.spect.I, 0))
+        for atom in self.eqPops.atomicPops:
+            if atom.pops is not None:
+                self.ltePopsStore[atom.element.name].append(np.expand_dims(atom.nStar, 0))
+                self.nltePopsStore[atom.element.name].append(np.expand_dims(atom.pops, 0))
+        self.neStore.append(np.expand_dims(self.atmos.ne, 0))
 
-    # def load_timestep(self, stepNum):
-    #     with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
-    #         step = pickle.load(pkl)
 
-    #     self.idx = stepNum
-    #     self.atmos.temperature[:] = self.atmost.tg1[self.idx]
-    #     self.atmos.vlos[:] = self.atmost.vz1[self.idx]
-    #     if not self.conserveCharge:
-    #         self.atmos.ne[:] = self.atmost.ne1[self.idx]
+    def load_timestep(self, stepNum):
+        self.idx = stepNum
+        zGrid = self.fixedZGrid
+        zRadyn = self.atmost.z1[self.idx]
+        self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
+        self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
 
-    #     if self.advectPops or self.rescalePops:
-    #         self.atmos.nHTot[:] = self.nHTot[self.idx]
-    #     self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
+        self.atmos.nHTot[:] = weno4(zGrid, zRadyn, self.nHTot[self.idx])
+        self.atmos.bHeat[:] = weno4(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
-    #     self.atmos.height[:] = self.atmost.z1[self.idx]
+        for name, pops in self.nltePopsStore.items():
+            self.eqPops.atomicPops[name].pops[:] = pops[self.idx]
+            # NOTE(cmo): Remove entries after the one being loaded
+            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
-    #     for name, pops in step['eqPops'].items():
-    #         if pops['n'] is not None:
-    #             self.eqPops.atomicPops[name].pops[:] = pops['n']
-    #         self.eqPops.atomicPops[name].nStar[:] = pops['nStar']
-    #     self.atmos.ne[:] = step['ne']
-    #     self.ctx.spect.I[:] = step['Iwave']
-    #     self.ctx.update_deps()
+        for name, pops in self.ltePopsStore.items():
+            self.eqPops.atomicPops[name].nStar[:] = pops[self.idx]
+            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+
+        neStore = self.neStore
+        self.atmos.ne[:] = neStore[self.idx]
+        neStore.resize(self.idx+1, *neStore.shape[1:])
+
+        shape = self.radStore['I'].shape
+        self.ctx.spect.I[:] = self.radStore['I'][self.idx]
+        self.radStore['I'].resize(self.idx+1, *shape[1:])
+
+        shape = self.radStore['J'].shape
+        self.ctx.spect.J[:] = self.radStore['J'][self.idx]
+        self.radStore['J'].resize(self.idx+1, *shape[1:])
+
+        self.ctx.update_deps()
 
     def increment_step(self):
         self.idx += 1
-        self.atmos.temperature[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.tg1[self.idx])
-        self.atmos.vlos[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.vz1[self.idx])
+        zGrid = self.fixedZGrid
+        zRadyn = self.atmost.z1[self.idx]
+        self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
+        self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
         if not self.conserveCharge:
-            self.atmos.ne[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.ne1[self.idx])
+            self.atmos.ne[:] = weno4(zGrid, zRadyn, self.atmost.ne1[self.idx])
 
-        self.atmos.nHTot[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.nHTot[self.idx])
-        self.atmos.bHeat[:] = weno4(self.fixedZGrid, self.atmost.z1[self.idx], self.atmost.bheat1[self.idx])
+        self.atmos.nHTot[:] = weno4(zGrid, zRadyn, self.nHTot[self.idx])
+        self.atmos.bHeat[:] = weno4(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
-        # self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
         if self.prd:
             self.ctx.configure_hprd_coeffs()
-        # self.opac_background()
 
     def time_dep_prev_state(self, evalGamma=False):
         if evalGamma:
@@ -261,8 +275,6 @@ class MsLightweaverInterpManager:
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=1.0, dt=None):
         dt = dt if dt is not None else self.atmost.dt[self.idx+1]
         dNrPops = 0.0
-        underTol = False
-        # self.ctx.spect.J[:] = 0.0
         if self.prd:
             for atom in self.ctx.activeAtoms:
                 for t in atom.trans:
@@ -278,52 +290,19 @@ class MsLightweaverInterpManager:
 
         prevState = self.time_dep_prev_state(evalGamma=(theta!=1.0))
         for sub in range(nSubSteps):
-            # self.JPrev[:] = self.ctx.spect.J
             if self.prd and sub > 1:
                 if delta > 5e-1:
-                    # self.ctx.prd_redistribute(maxIter=2, tol=5e-1)
                     pass
                 else:
                     self.ctx.prd_redistribute(maxIter=5, tol=min(1e-1, 10*delta))
 
             dJ = self.ctx.formal_sol_gamma_matrices()
-            # if sub > 2:
-            # delta, prevState = self.ctx.time_dep_update(dt, prevState)
             delta = self.time_dep_update(dt, prevState, theta=theta)
-            # for ia, atom in enumerate(self.ctx.activeAtoms):
-            #     nDag = np.copy(atom.n)
-            #     print(atom.atomicModel.name)
-            #     gml = np.zeros_like(atom.n)
-            #     for i in range(atom.n.shape[0]):
-            #         for k in range(atom.n.shape[1]):
-            #             gml[i, k] = atom.Gamma[i, :, k] @ atom.n[:, k]
-
-            #     for i in range(atom.n.shape[0]):
-            #         atom.n[i, :] = an_gml_sol(self.atmost, self.idx, prevState['pops'][ia][i], atom.n[i], gml[i], tol=1e-8)
-
-            #     advChange = np.abs(nDag - atom.n) / nDag
-            #     print('advChange: %.3e' % advChange.max())
-
-
-            #     # delta = an_rad_sol(self.atmost, self.idx, prevState['pops'][ia], atom.n, atom.nTotal, atom.Gamma)
-
-            # pdb.set_trace()
-            # delta = advChange.max()
-            if delta > 5e-1:
-                # underTol = False
-                continue
-            if not underTol:
-                underTol = True
-                if sub > 0 and self.conserveCharge:
-                    # self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, True, True)
-                    self.ctx.update_deps()
-                    # if self.prd:
-                        # self.ctx.configure_hprd_coeffs()
+            if sub > 0 and self.conserveCharge:
+                self.ctx.update_deps()
 
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
-
-
 
             if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
                             or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
@@ -349,93 +328,7 @@ class MsLightweaverInterpManager:
                 pickle.dump(sourceData, pkl)
 
             print('NON-CONVERGED')
-        # self.ctx.time_dep_conserve_charge(prevState)
 
-
-    # def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=0.5):
-    #     dt = self.atmost.dt[self.idx+1]
-    #     dNrPops = 0.0
-    #     underTol = False
-
-    #     prevState = self.time_dep_prev_state()
-    #     for sub in range(nSubSteps):
-    #         dJ = self.ctx.formal_sol_gamma_matrices()
-    #         delta = self.time_dep_update(0.5 * dt, prevState, theta=theta)
-    #         if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
-    #                         or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
-    #                         or (dJ < 1e-6)):
-    #             break
-
-    #     print('-'*80)
-    #     print('ADVECTING')
-    #     print('-'*80)
-    #     nr_advect(self.atmost, self.idx, self.eqPops, [a.name for a in self.aSet.activeAtoms], self.at)
-
-    #     prevState = self.time_dep_prev_state()
-    #     for sub in range(nSubSteps):
-    #         dJ = self.ctx.formal_sol_gamma_matrices()
-    #         delta = self.time_dep_update(0.5 * dt, prevState, theta=theta)
-    #         if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
-    #                         or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
-    #                         or (dJ < 1e-6)):
-    #             break
-
-    def cont_fn_data(self, step):
-        self.load_timestep(step)
-        self.ctx.depthData.fill = True
-        dJ = 1.0
-        while dJ > 1e-3:
-            dJ = self.ctx.formal_sol_gamma_matrices()
-        self.ctx.depthData.fill = False
-        J = np.copy(self.ctx.spect.J)
-
-        sourceData = {'chi': np.copy(self.ctx.depthData.chi),
-                      'eta': np.copy(self.ctx.depthData.eta),
-                      'chiBg': np.copy(self.ctx.background.chi),
-                      'etaBg': np.copy(self.ctx.background.eta),
-                      'scaBg': np.copy(self.ctx.background.sca),
-                      'J': J
-                      }
-        return sourceData
-
-    def rf_k(self, step, dt, pertSize, k, Jstart=None):
-        self.load_timestep(step)
-        print(pertSize)
-
-        self.ctx.clear_ng()
-        if Jstart is not None:
-            self.ctx.spect.J[:] = Jstart
-        else:
-            self.ctx.spect.J[:] = 0.0
-
-        self.atmos.temperature[k] += 0.5 * pertSize
-        self.ctx.update_deps()
-
-        if Jstart is None:
-            dJ = 1.0
-            while dJ > 1e-3:
-                dJ = self.ctx.formal_sol_gamma_matrices()
-        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt, theta=1.0)
-        plus = np.copy(self.ctx.spect.I[:, -1])
-
-        self.load_timestep(step)
-        self.ctx.clear_ng()
-        if Jstart is not None:
-            self.ctx.spect.J[:] = Jstart
-        else:
-            self.ctx.spect.J[:] = 0.0
-
-        self.atmos.temperature[k] -= 0.5 * pertSize
-        self.ctx.update_deps()
-
-        if Jstart is None:
-            dJ = 1.0
-            while dJ > 1e-3:
-                dJ = self.ctx.formal_sol_gamma_matrices()
-        self.time_dep_step(popsTol=1e-3, JTol=5e-3, dt=dt, theta=1.0)
-        minus = np.copy(self.ctx.spect.I[:, -1])
-
-        return plus, minus
 
 def convert_atomic_pops(atom):
     d = {}
