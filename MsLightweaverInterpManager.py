@@ -47,6 +47,10 @@ def check_write_git_revision(outputDir):
     with open(outputDir + 'GitRevision.txt', 'w') as f:
         f.write(revision)
 
+def FastBackground(*args):
+    import lightweaver.LwCompiled
+    return lightweaver.LwCompiled.FastBackground(*args, Nthreads=16)
+
 @njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     Nlevel = n.shape[0]
@@ -125,7 +129,11 @@ class MsLightweaverInterpManager:
             else:
                 self.eqPops = self.aSet.compute_eq_pops(self.atmos)
 
-            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, initSol=InitialSolution.Lte, conserveCharge=self.conserveCharge, Nthreads=self.Nthreads)
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, 
+                                  initSol=InitialSolution.Lte, 
+                                  conserveCharge=self.conserveCharge, 
+                                  Nthreads=self.Nthreads,
+                                  backgroundProvider=FastBackground)
             simOut = self.zarrStore.require_group('SimOutput')
             pops = simOut.require_group('Populations')
             self.nltePopsStore = pops.require_group('NLTE')
@@ -135,13 +143,13 @@ class MsLightweaverInterpManager:
             simParams['wavelength'] = self.ctx.spect.wavelength
             simParams['zGrid'] = self.fixedZGrid
 
-            self.radStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
-            self.radStore['I'] = np.expand_dims(self.ctx.spect.I, 0)
+            self.radStore['J'] = np.zeros((0, *self.ctx.spect.J.shape))
+            self.radStore['I'] = np.zeros((0, *self.ctx.spect.I.shape))
             for atom in self.eqPops.atomicPops:
                 if atom.pops is not None:
-                    self.ltePopsStore[atom.element.name] = np.expand_dims(atom.nStar, 0)
-                    self.nltePopsStore[atom.element.name] = np.expand_dims(atom.pops, 0)
-            simOut['ne'] = np.expand_dims(self.atmos.ne, 0)
+                    self.ltePopsStore[atom.element.name] = np.zeros((0, *atom.nStar.shape))
+                    self.nltePopsStore[atom.element.name] = np.zeros((0, *atom.pops.shape))
+            simOut['ne'] = np.zeros((0, *self.atmos.ne.shape))
             self.neStore = simOut['ne']
 
         self.atmos.bHeat = np.ones(self.atmos.Nspace) * 1e-20
@@ -168,14 +176,16 @@ class MsLightweaverInterpManager:
         else:
             raise ConvergenceError('Stat Eq did not converge.')
 
-        if overwritePops:
-            # NOTE(cmo): Overwrite the initial versions of these
-            for atom in self.eqPops.atomicPops:
-                if atom.pops is not None:
-                    self.nltePopsStore[atom.element.name][0, ...] = atom.pops
-            self.neStore[0, :] = self.atmos.ne
+        # if overwritePops:
+            # # NOTE(cmo): Overwrite the initial versions of these
+            # for atom in self.eqPops.atomicPops:
+                # if atom.pops is not None:
+                    # self.nltePopsStore[atom.element.name][0, ...] = atom.pops
+            # self.neStore[0, :] = self.atmos.ne
 
-    def save_timestep(self):
+    def save_timestep(self, forceOverwrite=False):
+        if self.idx == 0 and self.radStore['I'].shape[0] > 0 and not forceOverwrite: 
+            return
         self.radStore['J'].append(np.expand_dims(self.ctx.spect.J, 0))
         self.radStore['I'].append(np.expand_dims(self.ctx.spect.I, 0))
         for atom in self.eqPops.atomicPops:
@@ -264,10 +274,13 @@ class MsLightweaverInterpManager:
         print('ctxRays BC')
         print('------')
         ctxRays = lw.Context(atmos, self.ctx.kwargs['spect'], self.ctx.eqPops, Nthreads=16)
+        ctxRays.spect.J[:] = self.ctx.spect.J
         ctxRays.depthData.fill = True
-        dJ = 1.0
-        while dJ > 1.0e-3:
+        for i in range(50):
             dJ = ctxRays.formal_sol_gamma_matrices()
+            if dJ < 1e-3:
+                break
+        
 
         return ctxRays.depthData.I
 
@@ -298,8 +311,8 @@ class MsLightweaverInterpManager:
 
             dJ = self.ctx.formal_sol_gamma_matrices()
             delta = self.time_dep_update(dt, prevState, theta=theta)
-            if sub > 0 and self.conserveCharge:
-                self.ctx.update_deps()
+            # if sub > 0 and self.conserveCharge:
+                # self.ctx.update_deps()
 
             if self.conserveCharge:
                 dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})

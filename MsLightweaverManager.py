@@ -67,6 +67,25 @@ def nr_advect(atmost, i0, eqPops, activeAtomNames, abundances):
         pop *= popCorrectionFactor
         eqPops[a][...] = pop
 
+class CoronalIrraditation(lw.BoundaryCondition):
+    def __init__(self):
+        # NOTE(cmo): This data needs to be in (mu, toObs) order, i.e. mu[0]
+        # down, mu[0] up, mu[1] down...
+        # self.I = I1d.reshape(I1d.shape[0], -1, I1d.shape[-1])
+        self.I = None
+
+    def set_bc(self, I1d):
+        self.I = np.expand_dims(I1d, axis=2)
+
+    def compute_bc(self, atmos, spect):
+        # if spect.wavelength.shape[0] != self.I.shape[0]:
+        #     result = np.ones((spect.wavelength.shape[0], spect.I.shape[1], atmos.Nz))
+        # else:
+        if self.I is None:
+            raise ValueError('I has not been set (CoronalIrradtion)')
+        result = np.copy(self.I)
+        return result
+
 @njit
 def time_dep_update_impl(theta, dt, Gamma, GammaPrev, n, nPrev):
     Nlevel = n.shape[0]
@@ -99,8 +118,10 @@ class MsLightweaverManager:
 
     def __init__(self, atmost, outputDir,
                  atoms, activeAtoms=['H', 'Ca'],
+                 detailedH=False,
                  startingCtx=None, conserveCharge=False,
                  populationTransportMode='Advect',
+                 downgoingRadiation=None,
                  prd=False):
         # check_write_git_revision(outputDir)
         self.atmost = atmost
@@ -110,6 +131,7 @@ class MsLightweaverManager:
         self.idx = 0
         self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
+        self.detailedH = detailedH
         if populationTransportMode == 'Advect':
             self.advectPops = True
             self.rescalePops = False
@@ -122,6 +144,8 @@ class MsLightweaverManager:
         else:
             raise ValueError('Unknown populationTransportMode: %s' % populationTransportMode)
 
+        self.downgoingRadiation = downgoingRadiation
+
         if startingCtx is not None:
             self.ctx = startingCtx
             args = startingCtx.arguments
@@ -129,15 +153,23 @@ class MsLightweaverManager:
             self.spect = args['spect']
             self.aSet = self.spect.radSet
             self.eqPops = args['eqPops']
+            self.upperBc = atmos.upperBc
         else:
             nHTot = np.copy(self.nHTot[0])
-            self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot)
+            if self.downgoingRadiation:
+                self.upperBc = CoronalIrraditation()
+            else:
+                self.upperBc = None
+
+            self.atmos = Atmosphere.make_1d(scale=ScaleType.Geometric, depthScale=np.copy(atmost.z1[0]), temperature=np.copy(atmost.tg1[0]), vlos=np.copy(atmost.vz1[0]), vturb=np.copy(atmost.vturb), ne=np.copy(atmost.ne1[0]), nHTot=nHTot, upperBc=self.upperBc)
 
             # self.atmos.convert_scales()
             self.atmos.quadrature(5)
 
             self.aSet = RadiativeSet(atoms)
             self.aSet.set_active(*activeAtoms)
+            if detailedH:
+                self.aSet.set_detailed_static('H')
             # NOTE(cmo): Radyn seems to compute the collisional rates once per
             # timestep(?) and we seem to get a much better agreement for Ca
             # with the CH rates when H is set to LTE for the initial timestep.
@@ -156,6 +188,12 @@ class MsLightweaverManager:
         self.atmos.bHeat = np.ones_like(self.atmost.bheat1[0]) * 1e-20
         self.atmos.hPops = self.eqPops['H']
         np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
+        if self.detailedH:
+            self.eqPops['H'][:] = self.atmost.nh1[0, :] / (np.sum(self.atmost.nh1[0, :], axis=0) / self.atmos.nHTot)[None, :]
+
+        if self.downgoingRadiation:
+            self.upperBc.set_bc(self.downgoingRadiation.compute_downgoing_radiation(self.spect.wavelength, self.atmos))
+        # self.opac_background()
 
         # NOTE(cmo): Set up background
         # self.opc = OpcFile('opctab_cmo_mslw.dat')
@@ -201,7 +239,7 @@ class MsLightweaverManager:
 
     def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3):
         if self.prd:
-            self.ctx.configure_hprd_coeffs()
+            self.ctx.update_hprd_coeffs()
 
         for i in range(NmaxIter):
             dJ = self.ctx.formal_sol_gamma_matrices()
@@ -304,10 +342,15 @@ class MsLightweaverManager:
             self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
+        if self.detailedH:
+            self.eqPops['H'][:] = self.atmost.nh1[self.idx, :] / (np.sum(self.atmost.nh1[self.idx, :], axis=0) / self.atmos.nHTot)[None, :]
+
         self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
         if self.prd:
-            self.ctx.configure_hprd_coeffs()
+            self.ctx.update_hprd_coeffs()
+        if self.downgoingRadiation:
+            self.upperBc.set_bc(self.downgoingRadiation.compute_downgoing_radiation(self.spect.wavelength, self.atmos))
         # self.opac_background()
 
     def time_dep_prev_state(self, evalGamma=False):
@@ -347,7 +390,7 @@ class MsLightweaverManager:
                     except:
                         pass
 
-            self.ctx.configure_hprd_coeffs()
+            self.ctx.update_hprd_coeffs()
             self.ctx.formal_sol_gamma_matrices()
             self.ctx.prd_redistribute(200)
 

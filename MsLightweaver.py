@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from lightweaver.rh_atoms import H_6_atom, C_atom, O_atom, OI_ord_atom, Si_atom, Al_atom, Fe_atom, FeI_atom, MgII_atom, N_atom, Na_atom, S_atom, CaII_atom, He_9_atom
 import lightweaver as lw
-from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa
+from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa, H_6_nobb
 from pathlib import Path
 import os
 import os.path as path
@@ -14,8 +14,9 @@ from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_cont
 from ReadAtmost import read_atmost
 # from threadpoolctl import threadpool_limits
 # threadpool_limits(1)
+from RadynEmistab import EmisTable
 
-OutputDir = 'TimestepsAdvNr/'
+OutputDir = 'TimestepsPrdIncRad/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -23,17 +24,27 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom()
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
+FchromaNoHBbAtoms = [H_6_nobb(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+                MgII_atom(), N_atom(), Na_atom(), S_atom()]
+FchromaNoHBbNoContAtoms = [H_6_nobb(), CaII(), He_9_atom()]
 AtomSet = FchromaAtoms
 ConserveCharge = True
 PopulationTransportMode = 'Advect'
-Prd = False
+Prd = True
+DetailedH = False
+CoronalIrradiation = EmisTable('emistab.dat')
 
 test_timesteps_in_dir(OutputDir)
 
-atmost = read_atmost('atmost_cmo.dat')
+atmost = read_atmost('atmost.dat')
 atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
-    atmost.bheat1 = np.load('BheatInterp.npy')
+    try:
+        atmost.bheat1 = np.load('BheatInterp.npy')
+    except:
+        print('Unable to find BheatInterp.npy, press enter to continue without non-thermal beam rates')
+        input()
+        atmost.bheat1 = np.zeros_like(atmost.vz1)
 
 startingCtx = optional_load_starting_context(OutputDir)
 
@@ -41,9 +52,10 @@ start = time.time()
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
                           atoms=AtomSet,
                           activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
+                          detailedH=DetailedH,
                           conserveCharge=ConserveCharge,
                           populationTransportMode=PopulationTransportMode,
-                          prd=Prd)
+                          prd=Prd, downgoingRadiation=CoronalIrradiation)
 ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
 ms.save_timestep()
 

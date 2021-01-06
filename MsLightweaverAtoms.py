@@ -193,6 +193,12 @@ def H_6():
 
     return H
 
+def H_6_nobb():
+    H = H_6()
+    H.lines = []
+    reconfigure_atom(H)
+    return H
+
 def H_6_nasa():
     radynQNorm = 12.85e3
     qNormRatio = radynQNorm / lw.VMICRO_CHAR

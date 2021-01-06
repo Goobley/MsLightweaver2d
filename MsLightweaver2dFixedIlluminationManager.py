@@ -12,6 +12,7 @@ from MsLightweaverInterpManager import MsLightweaverInterpManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 from ReadAtmost import read_atmost
 from weno4 import weno4
+import zarr
 
 class FixedXBc(lw.BoundaryCondition):
     def __init__(self, mode):
@@ -37,13 +38,19 @@ class FixedXBc(lw.BoundaryCondition):
         result = np.copy(self.I)
         return result
 
+
+def FastBackground(*args):
+    import lightweaver.LwCompiled
+    return lightweaver.LwCompiled.FastBackground(*args, Nthreads=72)
+
 class MsLw2d:
     def __init__(self, outputDir, atmost, zAxis, xAxis,
                  atoms,
                  activeAtoms=['H', 'Ca'],
                  startingCtx=None, startingCtx1d=None,
-                 conserveCharge=False):
-        test_timesteps_in_dir(OutputDir)
+                 conserveCharge=False,
+                 saveJ=True):
+        # test_timesteps_in_dir(OutputDir)
 
         self.atmost = atmost
         self.zAxis = zAxis
@@ -52,22 +59,29 @@ class MsLw2d:
         self.outputDir = outputDir
         self.activeAtoms = activeAtoms
         self.atoms = atoms
+        self.saveJ = saveJ
 
         # NOTE(cmo): Initialise 1D boundary condition
         self.ms = MsLightweaverInterpManager(atmost=self.atmost, outputDir=outputDir,
-                                atoms=activeAtoms, fixedZGrid=self.zAxis,
+                                atoms=atoms, fixedZGrid=self.zAxis,
                                 activeAtoms=activeAtoms, startingCtx=startingCtx1d,
-                                conserveCharge=conserveCharge,
+                                conserveCharge=False,
+                                zarrName=None,
                                 prd=False)
         self.ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
+        self.ms.save_timestep()
 
         # NOTE(cmo): Set up 2D atmosphere
-        Nz = ms.fixedZGrid.shape[0]
+        Nz = self.ms.fixedZGrid.shape[0]
         Nx = xAxis.shape[0]
         self.Nz = Nz
         self.Nx = Nx
 
-        self.zarrStore = zarr.convenience.open(outputDir + 'MsLw2d.zarr')
+        Nquad2d = 6
+        self.Nquad2d = Nquad2d
+
+        zarrName = 'MsLw2d.zarr' if zarrName is None else zarrName
+        self.zarrStore = zarr.convenience.open(outputDir + zarrName)
         if startingCtx is not None:
             self.ctx = startingCtx
             args = startingCtx.kwargs
@@ -77,32 +91,34 @@ class MsLw2d:
             self.eqPops2d = args['eqPops']
             self.nltePopsStore = self.zarrStore['SimOutput/Populations/NLTE']
             self.ltePopsStore = self.zarrStore['SimOutput/Populations/LTE']
-            self.radStore = self.zarrStore['SimOutput/Radiation']
+            self.timeRadStore = self.zarrStore['SimOutput/Radiation']
             self.neStore = self.zarrStore['SimOutput/ne']
+            self.ctx.update_deps()
+            # self.load_timestep(0)
         else:
             temperature = np.zeros((Nz, Nx))
-            temperature[...] = ms.atmos.temperature[:, None]
+            temperature[...] = self.ms.atmos.temperature[:, None]
             ne = np.zeros((Nz, Nx))
-            ne[...] = ms.atmos.ne[:, None]
+            ne[...] = self.ms.atmos.ne[:, None]
             vz = np.zeros((Nz, Nx))
             vx = np.zeros((Nz, Nx))
             vturb = np.ones((Nz, Nx)) * 2e3
             nHTot = np.zeros((Nz, Nx))
-            nHTot[...] = ms.atmos.nHTot[:, None]
-            self.atmos2d = lw.Atmosphere.make_2d(height=ms.fixedZGrid, x=xAxis, temperature=temperature,
+            nHTot[...] = self.ms.atmos.nHTot[:, None]
+            self.atmos2d = lw.Atmosphere.make_2d(height=zAxis, x=xAxis, temperature=temperature,
                                             ne=ne, vx=vx, vz=vz, vturb=vturb, nHTot=nHTot,
                                             xLowerBc=FixedXBc('lower'), xUpperBc=FixedXBc('upper'))
-            self.eqPops2d = ms.aSet.compute_eq_pops(self.atmos2d)
+            self.eqPops2d = self.ms.aSet.compute_eq_pops(self.atmos2d)
             for atom in activeAtoms:
-                eqPops2d[atom].reshape(-1, Nz, Nx)[...] = self.ms.eqPops[atom][:, :, None]
+                self.eqPops2d[atom].reshape(-1, Nz, Nx)[...] = self.ms.eqPops[atom][:, :, None]
 
-            self.atmos2d.hPops = eqPops2d['H']
+            self.atmos2d.hPops = self.eqPops2d['H']
             self.atmos2d.bHeat = np.zeros(Nz * Nx)
-            Nquad2d = 6
-            self.Nquad2d = Nquad2d
             self.atmos2d.quadrature(Nquad2d)
             # ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=70, crswCallback=lw.CrswIterator())
-            self.ctx = lw.Context(self.atmos2d, self.ms.spect, self.eqPops2d, Nthreads=72, formalSolver='piecewise_linear_2d')
+            self.ctx = lw.Context(self.atmos2d, self.ms.spect, self.eqPops2d, Nthreads=72,
+                                  formalSolver='piecewise_linear_2d', conserveCharge=conserveCharge,
+                                  backgroundProvider=FastBackground)
 
             simParams = self.zarrStore.require_group('SimParams')
             simParams['zAxis'] = self.zAxis
@@ -116,34 +132,41 @@ class MsLw2d:
             ics['vturb'] = atmos.vturb
             ics['ne'] = atmos.ne
             ics['nHTot'] = atmos.nHTot
-            ics['xLowerBc'] = atmos.xLowerBc.I
-            ics['xUpperBc'] = atmos.xUpperBc.I
+            # ics['xLowerBc'] = atmos.xLowerBc.I
+            # ics['xUpperBc'] = atmos.xUpperBc.I
 
             timeData = self.zarrStore.require_group('SimOutput')
             self.timeRadStore = timeData.require_group('Radiation')
             self.timePopsStore = timeData.require_group('Populations')
-            self.timeRadStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
-            self.timeRadStore['I'] = np.expand_dims(self.ctx.spect.I, 0)
+            # self.timeRadStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
+            # self.timeRadStore['I'] = np.expand_dims(self.ctx.spect.I, 0)
+            if self.saveJ:
+                self.timeRadStore['J'] = np.zeros((0, *self.ctx.spect.J.shape))
+            self.timeRadStore['I'] = np.zeros((0, *self.ctx.spect.I.shape))
             self.ltePopsStore = self.timePopsStore.require_group('LTE')
             self.nltePopsStore = self.timePopsStore.require_group('NLTE')
-            timeData['ne'] = self.atmos.ne
+            timeData['ne'] = np.zeros((0, *self.atmos2d.ne.shape))
             self.neStore = timeData['ne']
             for atom in self.eqPops2d.atomicPops:
                 if atom.pops is not None:
-                    self.ltePopsStore[atom.element.name] = np.expand_dims(atom.nStar, 0)
-                    self.nltePopsStore[atom.element.name] = np.expand_dims(atom.pops, 0)
+                    self.ltePopsStore[atom.element.name] = np.zeros((0, *atom.nStar.shape))
+                    self.nltePopsStore[atom.element.name] = np.zeros((0, *atom.pops.shape))
 
         self.idx = self.ms.idx
 
 
     def save_timestep_data(self):
-        self.timeRadStore['J'].append(np.expand_dims(self.ctx.spect.J, 0))
+        if self.idx == 0 and self.timeRadStore['I'].shape[0] > 0:
+            return
+
+        if self.saveJ:
+            self.timeRadStore['J'].append(np.expand_dims(self.ctx.spect.J, 0))
         self.timeRadStore['I'].append(np.expand_dims(self.ctx.spect.I, 0))
         for atom in self.eqPops2d.atomicPops:
             if atom.pops is not None:
                 self.ltePopsStore[atom.element.name].append(np.expand_dims(atom.nStar, 0))
                 self.nltePopsStore[atom.element.name].append(np.expand_dims(atom.pops, 0))
-        self.neStore.append(np.expand_dims(self.atmos.ne, 0))
+        self.neStore.append(np.expand_dims(self.atmos2d.ne, 0))
 
     def load_timestep(self, stepNum):
         self.ms.load_timestep(stepNum)
@@ -159,16 +182,17 @@ class MsLw2d:
             pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
         neStore = self.neStore
-        self.atmos.ne[:] = neStore[self.idx]
+        self.atmos2d.ne[:] = neStore[self.idx]
         neStore.resize(self.idx+1, *neStore.shape[1:])
 
-        shape = self.radStore['I'].shape
-        self.ctx.spect.I[:] = self.radStore['I'][self.idx]
-        self.radStore['I'].resize(self.idx+1, *shape[1:])
+        shape = self.timeRadStore['I'].shape
+        self.ctx.spect.I[:] = self.timeRadStore['I'][self.idx]
+        self.timeRadStore['I'].resize(self.idx+1, *shape[1:])
 
-        shape = self.radStore['J'].shape
-        self.ctx.spect.J[:] = self.radStore['J'][self.idx]
-        self.radStore['J'].resize(self.idx+1, *shape[1:])
+        if self.saveJ:
+            shape = self.timeRadStore['J'].shape
+            self.ctx.spect.J[:] = self.timeRadStore['J'][self.idx]
+            self.timeRadStore['J'].resize(self.idx+1, *shape[1:])
 
         self.ctx.update_deps()
 
@@ -181,31 +205,23 @@ class MsLw2d:
         self.ms.save_timestep()
 
 
-    def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3,
-                        overwritePops=True):
-        bcIntensity = ms.compute_2d_bc_rays(atmos2d.muz[:self.Nquad2d], atmos2d.wmu[:self.Nquad2d])
+    def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):
+        bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
         self.atmos2d.xUpperBc.set_bc(bcIntensity)
         for i in range(Nscatter):
             self.ctx.formal_sol_gamma_matrices()
         for i in range(2000):
             self.ctx.formal_sol_gamma_matrices()
-            dPops = ctx.stat_equil()
-            if dPops < 1e-3 and i > 5 and self.ctx.crswDone:
+            dPops = self.ctx.stat_equil(chunkSize=-1)
+            if dPops < popTol and i > 3 and self.ctx.crswDone:
                 break
 
-        if overwritePops:
-            # NOTE(cmo): Overwrite the initial versions of these
-            for atom in self.eqPops.atomicPops:
-                if atom.pops is not None:
-                    self.nltePopsStore[atom.element.name][0, ...] = atom.pops
-            self.neStore[0, :] = self.atmos.ne
-
-        self.ms.atmos.bHeat[:] = weno4(self.zGrid, self.ms.atmost.z1[0], self.ms.atmost.bheat1[0])
+        self.ms.atmos.bHeat[:] = weno4(self.zAxis, self.ms.atmost.z1[0], self.ms.atmost.bheat1[0])
 
 
-    def time_dep_step(self, Nsubsteps, popsTol, JTol):
-        bcIntensity = self.ms.compute_2d_bc_rays(atmos2d.muz[:Nquad2d], atmos2d.wmu[:Nquad2d])
+    def time_dep_step(self, Nsubsteps, popsTol):
+        bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
         # atmos2d.xUpperBc.set_bc(bcIntensity)
         print('-------')
@@ -214,13 +230,17 @@ class MsLw2d:
         for backgroundIter in range(2):
             self.ctx.formal_sol_gamma_matrices()
         prevState = None
+        dt = self.ms.atmost.dt[self.idx+1]
         for iter2d in range(Nsubsteps):
             self.ctx.formal_sol_gamma_matrices()
-            dPops, prevState = self.ctx.time_dep_update(self.ms.atmost.dt[self.idx+1], prevState)
+            dPops, prevState = self.ctx.time_dep_update(dt, prevState, chunkSize=-1)
             if self.conserveCharge:
-                dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
-                dPops = max(dPops, dNrPops)
-            if dPops < 1e-3 and iter2d > 5:
+                dPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState}, chunkSize=-1)
+                # NOTE(cmo): This is implicitly handled by the "Ng region" now,
+                # so dPops will be the change over the total iterative
+                # procedure.
+                # dPops = max(dPops, dNrPops)
+            if dPops < popsTol and iter2d > 5:
                 break
         else:
             raise ValueError('2D iteration failed to converge')
