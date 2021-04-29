@@ -49,7 +49,8 @@ class MsLw2d:
                  activeAtoms=['H', 'Ca'],
                  startingCtx=None, startingCtx1d=None,
                  conserveCharge=False,
-                 saveJ=True):
+                 saveJ=True,
+                 firstColumnFrom1d=False):
         # test_timesteps_in_dir(OutputDir)
 
         self.atmost = atmost
@@ -60,13 +61,14 @@ class MsLw2d:
         self.activeAtoms = activeAtoms
         self.atoms = atoms
         self.saveJ = saveJ
+        self.firstColumnFrom1d = firstColumnFrom1d
 
         # NOTE(cmo): Initialise 1D boundary condition
         self.ms = MsLightweaverInterpManager(atmost=self.atmost, outputDir=outputDir,
                                 atoms=atoms, fixedZGrid=self.zAxis,
                                 activeAtoms=activeAtoms, startingCtx=startingCtx1d,
                                 conserveCharge=False,
-                                zarrName=None,
+                                # zarrName=None,
                                 prd=False)
         self.ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
         self.ms.save_timestep()
@@ -80,6 +82,7 @@ class MsLw2d:
         Nquad2d = 6
         self.Nquad2d = Nquad2d
 
+        zarrName = None
         zarrName = 'MsLw2d.zarr' if zarrName is None else zarrName
         self.zarrStore = zarr.convenience.open(outputDir + zarrName)
         if startingCtx is not None:
@@ -115,6 +118,7 @@ class MsLw2d:
             self.atmos2d.hPops = self.eqPops2d['H']
             self.atmos2d.bHeat = np.zeros(Nz * Nx)
             self.atmos2d.quadrature(Nquad2d)
+            self.aSet = self.ms.aSet
             # ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=70, crswCallback=lw.CrswIterator())
             self.ctx = lw.Context(self.atmos2d, self.ms.spect, self.eqPops2d, Nthreads=72,
                                   formalSolver='piecewise_linear_2d', conserveCharge=conserveCharge,
@@ -194,16 +198,40 @@ class MsLw2d:
             self.ctx.spect.J[:] = self.timeRadStore['J'][self.idx]
             self.timeRadStore['J'].resize(self.idx+1, *shape[1:])
 
+        if self.firstColumnFrom1d:
+            self.copy_first_column_from_1d()
         self.ctx.update_deps()
+
+    def copy_first_column_from_1d(self):
+        for name, pops in self.nltePopsStore.items():
+            pops1 = self.ms.eqPops[name]
+            Nlevel = pops1.shape[0]
+            Nz = pops1.shape[1]
+            self.eqPops2d.atomicPops[name].pops.reshape(Nlevel,Nz,-1)[:,:,0] = pops1
+
+        for name, pops in self.ltePopsStore.items():
+            pops1 = self.ms.eqPops.atomicPops[name].nStar
+            Nlevel = pops1.shape[0]
+            Nz = pops1.shape[1]
+            self.eqPops2d.atomicPops[name].nStar.reshape(Nlevel,Nz,-1)[:,:,0] = pops1
+
+        self.atmos2d.ne.reshape(Nz,-1)[:, 0] = self.ms.atmos.ne[:]
+        self.atmos2d.nHTot.reshape(Nz,-1)[:, 0] = self.ms.atmos.nHTot[:]
+        self.atmos2d.temperature.reshape(Nz,-1)[:, 0] = self.ms.atmos.temperature[:]
+        self.atmos2d.vz.reshape(Nz,-1)[:,0] = self.ms.atmos.vlos[:]
+
 
     def increment_step(self):
         self.idx += 1
-        if self.conserveCharge:
-            self.ctx.update_deps()
         self.ms.increment_step()
         self.ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
         self.ms.save_timestep()
 
+        # NOTE(cmo): If set, load 1D sim into first column
+        if self.firstColumnFrom1d:
+            self.copy_first_column_from_1d()
+        if self.conserveCharge:
+            self.ctx.update_deps()
 
     def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
@@ -231,15 +259,46 @@ class MsLw2d:
             self.ctx.formal_sol_gamma_matrices()
         prevState = None
         dt = self.ms.atmost.dt[self.idx+1]
+        Nz = self.atmos2d.Nz
+        Nx = self.atmos2d.Nx
         for iter2d in range(Nsubsteps):
             self.ctx.formal_sol_gamma_matrices()
+            # if self.firstColumnFrom1d:
+            #     for atom in self.ctx.activeAtoms:
+            #         # 0 here gives identity for the time-dependent transition matrix
+            #         atom.Gamma.reshape(-1, Nz, Nx)[:,:,0] = 0.0
+            if self.firstColumnFrom1d:
+                nDagger = []
+                neDagger = np.copy(self.atmos2d.ne)
+
+                for atom in self.aSet.activeAtoms:
+                    nDagger.append(np.copy(self.eqPops2d[atom.element]))
+
             dPops, prevState = self.ctx.time_dep_update(dt, prevState, chunkSize=-1)
+
             if self.conserveCharge:
                 dPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState}, chunkSize=-1)
                 # NOTE(cmo): This is implicitly handled by the "Ng region" now,
                 # so dPops will be the change over the total iterative
                 # procedure.
                 # dPops = max(dPops, dNrPops)
+
+            if self.firstColumnFrom1d:
+                self.copy_first_column_from_1d()
+
+                dPops = 0.0
+                for i, atom in enumerate(self.aSet.activeAtoms):
+                    n = self.eqPops2d[atom.element]
+                    nDag = nDagger[i]
+
+                    relChange = np.nanmax(np.abs(n - nDag) / n)
+                    dPops = max(dPops, relChange)
+
+                relChange = np.nanmax(np.abs(self.atmos2d.ne - neDagger) / self.atmos2d.ne)
+                dPops = max(dPops, relChange)
+                print('    dPops after resetting first column to 1D values: %6.4e' % dPops)
+
+
             if dPops < popsTol and iter2d > 5:
                 break
         else:
