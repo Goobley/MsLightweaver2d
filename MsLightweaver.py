@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from lightweaver.rh_atoms import H_6_atom, C_atom, O_atom, OI_ord_atom, Si_atom, Al_atom, Fe_atom, FeI_atom, MgII_atom, N_atom, Na_atom, S_atom, CaII_atom, He_9_atom
 import lightweaver as lw
-from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa, H_6_nobb
+from MsLightweaverAtoms import H_6, CaII, H_6_nasa, CaII_nasa, H_6_nobb, H_6_noLybb, H_6_noLybbbf
 from pathlib import Path
 import os
 import os.path as path
@@ -16,7 +16,7 @@ from ReadAtmost import read_atmost
 # threadpool_limits(1)
 from RadynEmistab import EmisTable
 
-OutputDir = 'TimestepsPrdIncRad/'
+OutputDir = 'TimestepsAllNoNonThermHNoLybb/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/Rfs').mkdir(parents=True, exist_ok=True)
 Path(OutputDir + '/ContFn').mkdir(parents=True, exist_ok=True)
@@ -24,15 +24,27 @@ NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom()
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
 FchromaAtoms = [H_6(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
-FchromaNoHBbAtoms = [H_6_nobb(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+FchromaNoHbbAtoms = [H_6_nobb(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
                 MgII_atom(), N_atom(), Na_atom(), S_atom()]
-FchromaNoHBbNoContAtoms = [H_6_nobb(), CaII(), He_9_atom()]
-AtomSet = FchromaAtoms
-ConserveCharge = True
+FchromaNoLybbAtoms = [H_6_noLybb(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+                MgII_atom(), N_atom(), Na_atom(), S_atom()]
+FchromaNoLybbbfAtoms = [H_6_noLybbbf(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
+                MgII_atom(), N_atom(), Na_atom(), S_atom()]
+FchromaNoHbbNoContAtoms = [H_6_nobb(), CaII(), He_9_atom()]
+AtomSet = FchromaNoLybbAtoms
+
+# Removing Fang rates
+del AtomSet[0].collisions[-1]
+lw.atomic_model.reconfigure_atom(AtomSet[0])
+
+ConserveCharge = False
 PopulationTransportMode = 'Advect'
-Prd = True
-DetailedH = False
-CoronalIrradiation = EmisTable('emistab.dat')
+Prd = False
+DetailedH = True
+DetailedHPath = 'TimestepsAllNoNonThermH/'
+# CoronalIrradiation = EmisTable('emistab.dat')
+CoronalIrradiation = None
+ActiveAtoms = ['H', 'Ca']
 
 test_timesteps_in_dir(OutputDir)
 
@@ -49,14 +61,27 @@ if atmost.bheat1.shape[0] == 0:
 startingCtx = optional_load_starting_context(OutputDir)
 
 start = time.time()
+if ConserveCharge and 'He' in ActiveAtoms:
+    msFixedNe = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
+                            atoms=AtomSet,
+                            activeAtoms=ActiveAtoms, startingCtx=startingCtx,
+                            detailedH=DetailedH,
+                            detailedHPath=DetailedHPath,
+                            conserveCharge=False,
+                            populationTransportMode=PopulationTransportMode,
+                            prd=Prd, downgoingRadiation=CoronalIrradiation)
+    msFixedNe.initial_stat_eq(popTol=1e-3, Nscatter=20)
 ms = MsLightweaverManager(atmost=atmost, outputDir=OutputDir,
                           atoms=AtomSet,
-                          activeAtoms=['H', 'Ca'], startingCtx=startingCtx,
+                          activeAtoms=ActiveAtoms, startingCtx=startingCtx,
                           detailedH=DetailedH,
+                          detailedHPath=DetailedHPath,
                           conserveCharge=ConserveCharge,
                           populationTransportMode=PopulationTransportMode,
                           prd=Prd, downgoingRadiation=CoronalIrradiation)
-ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
+if ConserveCharge and 'He' in ActiveAtoms:
+    ms.ctx.eqPops['He'][...] = msFixedNe.ctx.eqPops['He']
+ms.initial_stat_eq(popTol=1e-3, Nscatter=20)
 ms.save_timestep()
 
 # NOTE(cmo): Due to monkey-patching we can't reload the context currently

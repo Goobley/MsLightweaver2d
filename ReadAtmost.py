@@ -84,8 +84,8 @@ def read_atmost(filename='atmost.dat') -> Atmost:
             cname = np.fromfile(f, 'c', 8)
             _ = np.fromfile(f, np.int32, 1)
 
-            # Record: timep 8, dtnp 8, z1 8 * ndep(300), 
-            # d1 8 * ndep(300), ne1 8 * ndep(300), 
+            # Record: timep 8, dtnp 8, z1 8 * ndep(300),
+            # d1 8 * ndep(300), ne1 8 * ndep(300),
             # tg1 8 * ndep(300), vz1 8 * ndep(300),
             # nh1 8 * 6 * ndep(300): 26416
             # bheat1 8 * ndep(300): 26416 + 2400
@@ -120,4 +120,39 @@ def read_atmost(filename='atmost.dat') -> Atmost:
     bheat1t = np.array(bheat1t).squeeze()
 
     return Atmost(grav.item(), tau2.item(), vturb, times, dtns, z1t, d1t, ne1t, tg1t, vz1t, nh1t, bheat1t)
+
+def read_flarix(filename, filenameHPops, Ntime, Ndepth) -> Atmost:
+    z1t = np.zeros((Ntime, Ndepth))
+    tg1t = np.zeros((Ntime, Ndepth))
+    ne1t = np.zeros((Ntime, Ndepth))
+    d1t = np.zeros((Ntime, Ndepth))
+    n1t = np.zeros((Ntime, Ndepth))
+    vz1t = np.zeros((Ntime, Ndepth))
+    nh1t = np.zeros((Ntime, Ndepth, 6))
+    with open(filename, 'rb') as f:
+
+        for t in range(Ntime):
+            for k in range(Ndepth):
+                _ = np.fromfile(f, np.int32, 1)
+                z1t[t, k] = np.fromfile(f, np.float64, 1)
+                tg1t[t, k] = np.fromfile(f, np.float64, 1)
+                ne1t[t, k] = np.fromfile(f, np.float64, 1)
+                n1t[t,k] = np.fromfile(f, np.float64, 1)
+                d1t[t, k] = np.fromfile(f, np.float64, 1)
+                _ = np.fromfile(f, np.float64, 1)
+                vz1t[t, k] = np.fromfile(f, np.float64, 1)
+                _ = np.fromfile(f, np.float64, 1)
+                _ = np.fromfile(f, np.int32, 1)
+
+    with open(filenameHPops, 'rb') as f:
+        for t in range(Ntime):
+            _ = np.fromfile(f, np.int32, 1)
+            nh1t[t].reshape(-1)[...] = np.fromfile(f, np.float64, 6 * Ndepth)
+            _ = np.fromfile(f, np.int32, 1)
+
+    return Atmost(0, 0, vturb=2e5 * np.ones(Ndepth), time=np.arange(Ntime, dtype=np.float64) * 0.1,
+                  dt=np.ones(Ntime) * 0.1, z1=-z1t, d1=d1t, ne1=ne1t, tg1=tg1t, vz1=-vz1t, nh1=nh1t, bheat1=np.array(()))
+
+
+
 

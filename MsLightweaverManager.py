@@ -7,7 +7,7 @@ from lightweaver.atomic_table import DefaultAtomicAbundance
 from lightweaver.atomic_set import RadiativeSet, SpeciesStateTable
 from lightweaver.molecule import MolecularTable
 from lightweaver.LwCompiled import LwContext
-from lightweaver.utils import InitialSolution, planck, NgOptions, ConvergenceError
+from lightweaver.utils import InitialSolution, planck, NgOptions, ConvergenceError, compute_radiative_losses, integrate_line_losses
 import lightweaver.constants as Const
 import lightweaver as lw
 from typing import List
@@ -119,6 +119,7 @@ class MsLightweaverManager:
     def __init__(self, atmost, outputDir,
                  atoms, activeAtoms=['H', 'Ca'],
                  detailedH=False,
+                 detailedHPath=None,
                  startingCtx=None, conserveCharge=False,
                  populationTransportMode='Advect',
                  downgoingRadiation=None,
@@ -132,6 +133,10 @@ class MsLightweaverManager:
         self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
         self.detailedH = detailedH
+        # NOTE(cmo): If this is None and detailedH is True then the data from
+        # atmost will be used, otherwise, an MsLw pickle will be loaded from
+        # the path.
+        self.detailedHPath = detailedHPath
         if populationTransportMode == 'Advect':
             self.advectPops = True
             self.rescalePops = False
@@ -189,10 +194,11 @@ class MsLightweaverManager:
         self.atmos.hPops = self.eqPops['H']
         np.save(self.outputDir + 'Wavelength.npy', self.ctx.spect.wavelength)
         if self.detailedH:
-            self.eqPops['H'][:] = self.atmost.nh1[0, :] / (np.sum(self.atmost.nh1[0, :], axis=0) / self.atmos.nHTot)[None, :]
+            self.eqPops['H'][:] = self.detailed_hydrogen_pops()
 
         if self.downgoingRadiation:
             self.upperBc.set_bc(self.downgoingRadiation.compute_downgoing_radiation(self.spect.wavelength, self.atmos))
+        self.ctx.depthData.fill = True
         # self.opac_background()
 
         # NOTE(cmo): Set up background
@@ -298,13 +304,42 @@ class MsLightweaverManager:
             # neAdv = interp1d(z0Tracer, np.log10(self.atmos.ne), kind=3, fill_value='extrapolate')(z1)
             # self.atmos.ne[:] = 10**neAdv
 
+    def detailed_hydrogen_pops(self):
+        if not self.detailedH:
+            raise ValueError('Detailed H pops called without detailedH==True')
+        if self.detailedHPath:
+            with open(self.detailedHPath + '/Step_%.6d.pickle' % self.idx, 'rb') as pkl:
+                step = pickle.load(pkl)
+            pops = step['eqPops']['H']['n']
+        else:
+            pops = self.atmost.nh1[self.idx, :] / (np.sum(self.atmost.nh1[self.idx, :], axis=0) / self.atmos.nHTot)[None, :]
+        return pops
+
+    def detailed_ne(self):
+        if not self.detailedH:
+            raise ValueError('Detailed ne called without detailedH==True')
+        if self.detailedHPath:
+            with open(self.detailedHPath + '/Step_%.6d.pickle' % self.idx, 'rb') as pkl:
+                step = pickle.load(pkl)
+            ne = step['ne']
+        else:
+            ne = self.atmost.ne1[self.idx]
+        return ne
+
 
     def save_timestep(self):
         i = self.idx
         with open(self.outputDir + 'Step_%.6d.pickle' % i, 'wb') as pkl:
             eqPops = distill_pops(self.eqPops)
             Iwave = self.ctx.spect.I
-            pickle.dump({'eqPops': eqPops, 'Iwave': Iwave, 'ne': self.atmos.ne}, pkl)
+            lines = []
+            for a in self.aSet.activeAtoms:
+                lines += self.aSet[a.element].lines
+            losses = compute_radiative_losses(self.ctx)
+            lineLosses = integrate_line_losses(self.ctx, losses, lines, extendGridNm=5.0)
+            pickle.dump({'eqPops': eqPops, 'Iwave': Iwave,
+                         'ne': self.atmos.ne, 'lines': lines,
+                         'losses': lineLosses}, pkl)
 
     def load_timestep(self, stepNum):
         with open(self.outputDir + 'Step_%.6d.pickle' % stepNum, 'rb') as pkl:
@@ -314,7 +349,7 @@ class MsLightweaverManager:
         self.atmos.temperature[:] = self.atmost.tg1[self.idx]
         self.atmos.vlos[:] = self.atmost.vz1[self.idx]
         if not self.conserveCharge:
-            self.atmos.ne[:] = self.atmost.ne1[self.idx]
+            self.atmos.ne[:] = self.detailed_ne()
 
         if self.advectPops or self.rescalePops:
             self.atmos.nHTot[:] = self.nHTot[self.idx]
@@ -336,14 +371,14 @@ class MsLightweaverManager:
         self.atmos.temperature[:] = self.atmost.tg1[self.idx]
         self.atmos.vlos[:] = self.atmost.vz1[self.idx]
         if not self.conserveCharge:
-            self.atmos.ne[:] = self.atmost.ne1[self.idx]
+            self.atmos.ne[:] = self.detailed_ne()
 
         if self.advectPops or self.rescalePops:
             self.atmos.nHTot[:] = self.nHTot[self.idx]
         self.atmos.bHeat[:] = self.atmost.bheat1[self.idx]
 
         if self.detailedH:
-            self.eqPops['H'][:] = self.atmost.nh1[self.idx, :] / (np.sum(self.atmost.nh1[self.idx, :], axis=0) / self.atmos.nHTot)[None, :]
+            self.eqPops['H'][:] = self.detailed_hydrogen_pops()
 
         self.atmos.height[:] = self.atmost.z1[self.idx]
         self.ctx.update_deps()
@@ -562,6 +597,7 @@ def convert_atomic_pops(atom):
     else:
         d['n'] = atom.pops
     d['nStar'] = atom.nStar
+    d['radiativeRates'] = atom.radiativeRates
     return d
 
 def distill_pops(eqPops):
