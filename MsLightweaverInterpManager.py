@@ -129,9 +129,9 @@ class MsLightweaverInterpManager:
             else:
                 self.eqPops = self.aSet.compute_eq_pops(self.atmos)
 
-            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops, 
-                                  initSol=InitialSolution.Lte, 
-                                  conserveCharge=self.conserveCharge, 
+            self.ctx = lw.Context(self.atmos, self.spect, self.eqPops,
+                                  initSol=InitialSolution.Lte,
+                                  conserveCharge=self.conserveCharge,
                                   Nthreads=self.Nthreads,
                                   backgroundProvider=FastBackground)
             simOut = self.zarrStore.require_group('SimOutput')
@@ -141,10 +141,12 @@ class MsLightweaverInterpManager:
             self.radStore = simOut.require_group('Radiation')
             simParams = self.zarrStore.require_group('SimParams')
             simParams['wavelength'] = self.ctx.spect.wavelength
-            simParams['zGrid'] = self.fixedZGrid
+            simParams['zGridInitial'] = np.copy(self.fixedZGrid)
 
             self.radStore['J'] = np.zeros((0, *self.ctx.spect.J.shape))
             self.radStore['I'] = np.zeros((0, *self.ctx.spect.I.shape))
+            simOut['zAxis'] = np.zeros((0, self.fixedZGrid.shape[0]))
+            self.zGridStore = simOut['zGrid']
             for atom in self.eqPops.atomicPops:
                 if atom.pops is not None:
                     self.ltePopsStore[atom.element.name] = np.zeros((0, *atom.nStar.shape))
@@ -184,7 +186,7 @@ class MsLightweaverInterpManager:
             # self.neStore[0, :] = self.atmos.ne
 
     def save_timestep(self, forceOverwrite=False):
-        if self.idx == 0 and self.radStore['I'].shape[0] > 0 and not forceOverwrite: 
+        if self.idx == 0 and self.radStore['I'].shape[0] > 0 and not forceOverwrite:
             return
         self.radStore['J'].append(np.expand_dims(self.ctx.spect.J, 0))
         self.radStore['I'].append(np.expand_dims(self.ctx.spect.I, 0))
@@ -193,11 +195,12 @@ class MsLightweaverInterpManager:
                 self.ltePopsStore[atom.element.name].append(np.expand_dims(atom.nStar, 0))
                 self.nltePopsStore[atom.element.name].append(np.expand_dims(atom.pops, 0))
         self.neStore.append(np.expand_dims(self.atmos.ne, 0))
+        self.zGridStore.append(np.expand_dims(self.fixedZGrid, 0))
 
 
     def load_timestep(self, stepNum):
         self.idx = stepNum
-        zGrid = self.fixedZGrid
+        zGrid = self.zGridStore[self.idx]
         zRadyn = self.atmost.z1[self.idx]
         self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
         self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
@@ -228,19 +231,36 @@ class MsLightweaverInterpManager:
 
         self.ctx.update_deps()
 
-    def increment_step(self):
+    def increment_step(self, newZGrid):
         self.idx += 1
+        prevZGrid = self.fixedZGrid
+
+        self.fixedZGrid = newZGrid
         zGrid = self.fixedZGrid
         zRadyn = self.atmost.z1[self.idx]
         self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
         self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
         if not self.conserveCharge:
             self.atmos.ne[:] = weno4(zGrid, zRadyn, self.atmost.ne1[self.idx])
+        else:
+            self.atmos.ne[:] = weno4(zGrid, prevZGrid, self.atmos.ne)
 
         self.atmos.nHTot[:] = weno4(zGrid, zRadyn, self.nHTot[self.idx])
         self.atmos.bHeat[:] = weno4(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
+        self.ctx.spect.I[...] = 0.0
+        self.ctx.spect.J[...] = 0.0
+
         self.ctx.update_deps()
+
+        for atom in self.eqPops.atomicPops:
+            if atom.pops is not None:
+                for i in range(atom.pops.shape[0]):
+                    atom.pops[i] = weno4(zGrid, prevZGrid, atom.pops[i])
+            # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
+            atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+
+
         if self.prd:
             self.ctx.configure_hprd_coeffs()
 
@@ -280,7 +300,7 @@ class MsLightweaverInterpManager:
             dJ = ctxRays.formal_sol_gamma_matrices()
             if dJ < 1e-3:
                 break
-        
+
 
         return ctxRays.depthData.I
 

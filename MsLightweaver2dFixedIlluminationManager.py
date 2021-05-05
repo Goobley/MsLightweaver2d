@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import os.path as path
 import time
+from scipy.signal import wiener
 from MsLightweaverInterpManager import MsLightweaverInterpManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 from ReadAtmost import read_atmost
@@ -44,7 +45,7 @@ def FastBackground(*args):
     return lightweaver.LwCompiled.FastBackground(*args, Nthreads=72)
 
 class MsLw2d:
-    def __init__(self, outputDir, atmost, zAxis, xAxis,
+    def __init__(self, outputDir, atmost, Nz, xAxis,
                  atoms,
                  activeAtoms=['H', 'Ca'],
                  startingCtx=None, startingCtx1d=None,
@@ -54,7 +55,7 @@ class MsLw2d:
         # test_timesteps_in_dir(OutputDir)
 
         self.atmost = atmost
-        self.zAxis = zAxis
+        self.Nz = Nz
         self.xAxis = xAxis
         self.conserveCharge = conserveCharge
         self.outputDir = outputDir
@@ -62,6 +63,11 @@ class MsLw2d:
         self.atoms = atoms
         self.saveJ = saveJ
         self.firstColumnFrom1d = firstColumnFrom1d
+
+        # NOTE(cmo): Compute initial z-axis - just respace while keeping same distribution.
+        self.zAxis = np.interp(np.linspace(0, 1, self.Nz),
+                               np.linspace(0, 1, self.atmost.z1.shape[1]),
+                               atmost.z1[0])
 
         # NOTE(cmo): Initialise 1D boundary condition
         self.ms = MsLightweaverInterpManager(atmost=self.atmost, outputDir=outputDir,
@@ -125,7 +131,7 @@ class MsLw2d:
                                   backgroundProvider=FastBackground)
 
             simParams = self.zarrStore.require_group('SimParams')
-            simParams['zAxis'] = self.zAxis
+            simParams['zAxisInitial'] = self.zAxis
             simParams['xAxis'] = self.xAxis
             simParams['wavelength'] = self.ctx.spect.wavelength
             ics = self.zarrStore.require_group('InitialConditions')
@@ -140,6 +146,8 @@ class MsLw2d:
             # ics['xUpperBc'] = atmos.xUpperBc.I
 
             timeData = self.zarrStore.require_group('SimOutput')
+            timeData['zAxis'] = np.zeros((0, Nz))
+            self.zGridStore = timeData['zAxis']
             self.timeRadStore = timeData.require_group('Radiation')
             self.timePopsStore = timeData.require_group('Populations')
             # self.timeRadStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
@@ -171,6 +179,7 @@ class MsLw2d:
                 self.ltePopsStore[atom.element.name].append(np.expand_dims(atom.nStar, 0))
                 self.nltePopsStore[atom.element.name].append(np.expand_dims(atom.pops, 0))
         self.neStore.append(np.expand_dims(self.atmos2d.ne, 0))
+        self.zGridStore.append(np.expand_dims(self.zAxis, 0))
 
     def load_timestep(self, stepNum):
         self.ms.load_timestep(stepNum)
@@ -184,6 +193,10 @@ class MsLw2d:
         for name, pops in self.ltePopsStore.items():
             self.eqPops2d.atomicPops[name].nStar[:] = pops[self.idx]
             pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+
+        zGridStore = self.zGridStore
+        self.atmos2d.z[:] = zGridStore[self.idx]
+        zGridStore.resize(self.idx+1, *zGridStore.shape[1:])
 
         neStore = self.neStore
         self.atmos2d.ne[:] = neStore[self.idx]
@@ -223,15 +236,52 @@ class MsLw2d:
 
     def increment_step(self):
         self.idx += 1
-        self.ms.increment_step()
+        # NOTE(cmo): First compute new zGrid for coming step
+        prevZAxis = self.zAxis
+        self.zAxis = self.next_z_axis()
+        zGrid = self.zAxis
+
+        self.ms.increment_step(self.zAxis)
         self.ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
         self.ms.save_timestep()
+
+        Nx = self.atmos2d.Nx
+
+        zRadyn = self.atmost.z1[0]
+        temperature = weno4(zGrid, zRadyn, self.atmost.tg1[0])
+        temp2d = self.atmos2d.temperature.reshape(self.Nz, Nx)
+        temp2d[...] = temperature[:, None]
+
+        ne2d = self.atmos2d.reshape(self.Nz, Nx)
+        if not self.conserveCharge:
+            ne = weno4(zGrid, zRadyn, self.atmost.ne1[0])
+            ne2d[...] = ne[:, None]
+        else:
+            for x in range(Nx):
+                ne2d[:, x] = weno4(zGrid, prevZAxis, ne[:, x])
+
+        nHTot = weno4(zGrid, zRadyn, self.nHTot[self.idx])
+        nHTot2d = self.atm2d.nHTot.reshape(self.Nz, Nx)
+        nHTot2d[...] = nHTot[:, None]
+
+        self.ctx.spect.I[...] = 0.0
+        self.ctx.spect.J[...] = 0.0
 
         # NOTE(cmo): If set, load 1D sim into first column
         if self.firstColumnFrom1d:
             self.copy_first_column_from_1d()
-        if self.conserveCharge:
-            self.ctx.update_deps()
+        # if self.conserveCharge:
+        self.ctx.update_deps()
+
+        for atom in self.eqPops.atomicPops:
+            if atom.pops is not None:
+                pops2d = atom.pops.reshape(atom.pops.shape[0], self.Nz, Nx)
+                for i in range(pops2d.shape[0]):
+                    for x in range(pops2d.shape[2]):
+                        pops2d[i, :, x] = weno4(zGrid, prevZGrid, pops2d[i, :, x])
+            # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
+            atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+
 
     def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
@@ -303,3 +353,58 @@ class MsLw2d:
                 break
         else:
             raise ValueError('2D iteration failed to converge')
+
+    def next_z_axis(self):
+        idxO = 0
+        idxN = self.idx
+        DistTol = 1
+        PointTotal = self.Nx
+        SmoothingSize = 15
+        HalfSmoothingSize = SmoothingSize // 2
+
+        # Merge grids
+        uniqueCombined = list(np.unique(np.sort(np.concatenate((self.atmost.z1[idxO],
+                                                                self.atmost.z1[idxN])))))
+        while True:
+            diff = np.diff(uniqueCombined)
+            if diff.min() > DistTol:
+                break
+
+            del uniqueCombined[diff.argmin() + 1]
+
+        # Smooth
+        uniqueCombined = np.sort(np.array(uniqueCombined))
+        ucStart = uniqueCombined[0]
+        uniqueCombined = wiener(uniqueCombined - ucStart, SmoothingSize) + ucStart
+
+        # Fix ends
+        uniqueCombined = list(uniqueCombined)
+        del uniqueCombined[:HalfSmoothingSize]
+        del uniqueCombined[-HalfSmoothingSize:]
+        z1O = np.copy(self.atmost.z1[idxO][::-1])
+        startIdx = np.searchsorted(z1O, uniqueCombined[0])
+        endIdx = np.searchsorted(z1O, uniqueCombined[-1])
+        for v in z1O[:startIdx]:
+            uniqueCombined.append(v)
+        for v in z1O[endIdx:]:
+            uniqueCombined.append(v)
+        uniqueCombined = np.sort(uniqueCombined)
+
+
+        # Remove every other point starting from top/bottom until we reach desired number of points
+        UpperPointRemovalFraction = 3/4
+        UpperPointsToRemove = int(UpperPointRemovalFraction * (uniqueCombined.shape[0] - PointTotal))
+
+        # Is this efficient? No. But it should do for what we need right now
+        upper = -HalfSmoothingSize
+        for _ in range(UpperPointsToRemove):
+            uniqueCombined = np.delete(uniqueCombined, upper)
+            upper -= 1 # We only subtract 1 because the previous upper now points to the point below the one we just deleted
+
+        LowerPointsToRemove = uniqueCombined.shape[0] - PointTotal
+        lower = HalfSmoothingSize
+        for _ in range(LowerPointsToRemove):
+            uniqueCombined = np.delete(uniqueCombined, lower)
+            lower += 1
+
+        return np.copy(uniqueCombined[::-1])
