@@ -13,7 +13,7 @@ from MsLightweaver2dFixedIlluminationManager import MsLw2d
 from ReadAtmost import read_atmost
 from weno4 import weno4
 
-OutputDir = 'F9_flat_1037_80_nr_para_1stColCopy/'
+OutputDir = 'F9_flat_450_40_nr_para_1stColCopy/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -32,11 +32,12 @@ with open('ZGrid2d_1037.pkl', 'rb') as pkl:
 
 startingCtx1d = optional_load_starting_context(OutputDir, suffix='1d')
 startingCtx2d = optional_load_starting_context(OutputDir, suffix='2d')
-xAxis = np.linspace(0, 2000e3, 80)
+xAxis = np.linspace(0, 2000e3, 40)
+Nz = 450
 # xAxis = np.concatenate(((0,), np.linspace(2e3, 998e3, 20), (1000e3,)))
 
 start = time.time()
-ms2d = MsLw2d(OutputDir, atmost, zAxis, xAxis,
+ms2d = MsLw2d(OutputDir, atmost, Nz, xAxis,
               AtomSet,
               activeAtoms=['H', 'Ca'],
               startingCtx1d=startingCtx1d, startingCtx=startingCtx2d,

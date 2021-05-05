@@ -65,9 +65,16 @@ class MsLw2d:
         self.firstColumnFrom1d = firstColumnFrom1d
 
         # NOTE(cmo): Compute initial z-axis - just respace while keeping same distribution.
-        self.zAxis = np.interp(np.linspace(0, 1, self.Nz),
-                               np.linspace(0, 1, self.atmost.z1.shape[1]),
-                               atmost.z1[0])
+        # Actually, try and use the one that will be used in step 1.
+        # self.zAxis = np.interp(np.linspace(0, 1, self.Nz),
+        #                        np.linspace(0, 1, self.atmost.z1.shape[1]),
+        #                        atmost.z1[0])
+        self.idx = 1
+        self.zAxis = self.next_z_axis()
+        self.idx = 0
+
+        zAxis = self.zAxis
+        self.nHTotRadyn0 = atmost.d1[0] / (lw.DefaultAtomicAbundance.massPerH * lw.Amu)
 
         # NOTE(cmo): Initialise 1D boundary condition
         self.ms = MsLightweaverInterpManager(atmost=self.atmost, outputDir=outputDir,
@@ -102,6 +109,7 @@ class MsLw2d:
             self.ltePopsStore = self.zarrStore['SimOutput/Populations/LTE']
             self.timeRadStore = self.zarrStore['SimOutput/Radiation']
             self.neStore = self.zarrStore['SimOutput/ne']
+            self.zGridStore = self.zarrStore['SimOutput/zAxis']
             self.ctx.update_deps()
             # self.load_timestep(0)
         else:
@@ -131,7 +139,7 @@ class MsLw2d:
                                   backgroundProvider=FastBackground)
 
             simParams = self.zarrStore.require_group('SimParams')
-            simParams['zAxisInitial'] = self.zAxis
+            simParams['zAxisInitial'] = np.copy(self.zAxis)
             simParams['xAxis'] = self.xAxis
             simParams['wavelength'] = self.ctx.spect.wavelength
             ics = self.zarrStore.require_group('InitialConditions')
@@ -252,20 +260,20 @@ class MsLw2d:
         temp2d = self.atmos2d.temperature.reshape(self.Nz, Nx)
         temp2d[...] = temperature[:, None]
 
-        ne2d = self.atmos2d.reshape(self.Nz, Nx)
+        ne2d = self.atmos2d.ne.reshape(self.Nz, Nx)
         if not self.conserveCharge:
             ne = weno4(zGrid, zRadyn, self.atmost.ne1[0])
             ne2d[...] = ne[:, None]
         else:
             for x in range(Nx):
-                ne2d[:, x] = weno4(zGrid, prevZAxis, ne[:, x])
+                ne2d[:, x] = weno4(zGrid, prevZAxis, ne2d[:, x])
 
-        nHTot = weno4(zGrid, zRadyn, self.nHTot[self.idx])
-        nHTot2d = self.atm2d.nHTot.reshape(self.Nz, Nx)
+        nHTot = weno4(zGrid, zRadyn, self.nHTotRadyn0)
+        nHTot2d = self.atmos2d.nHTot.reshape(self.Nz, Nx)
         nHTot2d[...] = nHTot[:, None]
 
-        self.ctx.spect.I[...] = 0.0
-        self.ctx.spect.J[...] = 0.0
+        # self.ctx.spect.I[...] = 0.0
+        # self.ctx.spect.J[...] = 0.0
 
         # NOTE(cmo): If set, load 1D sim into first column
         if self.firstColumnFrom1d:
@@ -273,14 +281,14 @@ class MsLw2d:
         # if self.conserveCharge:
         self.ctx.update_deps()
 
-        for atom in self.eqPops.atomicPops:
+        for atom in self.eqPops2d.atomicPops:
             if atom.pops is not None:
                 pops2d = atom.pops.reshape(atom.pops.shape[0], self.Nz, Nx)
                 for i in range(pops2d.shape[0]):
                     for x in range(pops2d.shape[2]):
-                        pops2d[i, :, x] = weno4(zGrid, prevZGrid, pops2d[i, :, x])
-            # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
-            atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+                        pops2d[i, :, x] = weno4(zGrid, prevZAxis, pops2d[i, :, x])
+                # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
+                atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
 
 
     def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):
@@ -358,7 +366,7 @@ class MsLw2d:
         idxO = 0
         idxN = self.idx
         DistTol = 1
-        PointTotal = self.Nx
+        PointTotal = self.Nz
         SmoothingSize = 15
         HalfSmoothingSize = SmoothingSize // 2
 
@@ -390,21 +398,27 @@ class MsLw2d:
             uniqueCombined.append(v)
         uniqueCombined = np.sort(uniqueCombined)
 
+        if uniqueCombined.shape[0] > PointTotal:
+            # Remove every other point starting from top/bottom until we reach desired number of points
+            UpperPointRemovalFraction = 3/4
+            UpperPointsToRemove = int(UpperPointRemovalFraction * (uniqueCombined.shape[0] - PointTotal))
 
-        # Remove every other point starting from top/bottom until we reach desired number of points
-        UpperPointRemovalFraction = 3/4
-        UpperPointsToRemove = int(UpperPointRemovalFraction * (uniqueCombined.shape[0] - PointTotal))
+            # Is this efficient? No. But it should do for what we need right now
+            upper = -HalfSmoothingSize
+            for _ in range(UpperPointsToRemove):
+                uniqueCombined = np.delete(uniqueCombined, upper)
+                upper -= 1 # We only subtract 1 because the previous upper now points to the point below the one we just deleted
 
-        # Is this efficient? No. But it should do for what we need right now
-        upper = -HalfSmoothingSize
-        for _ in range(UpperPointsToRemove):
-            uniqueCombined = np.delete(uniqueCombined, upper)
-            upper -= 1 # We only subtract 1 because the previous upper now points to the point below the one we just deleted
+            LowerPointsToRemove = uniqueCombined.shape[0] - PointTotal
+            lower = HalfSmoothingSize
+            for _ in range(LowerPointsToRemove):
+                uniqueCombined = np.delete(uniqueCombined, lower)
+                lower += 1
+        else:
+            for i in range(PointTotal - uniqueCombined.shape[0]):
+                a = np.diff(uniqueCombined).argmax()
+                uniqueCombined = np.insert(uniqueCombined, a + 1,
+                                           0.5 * (uniqueCombined[a] + uniqueCombined[a+1]))
 
-        LowerPointsToRemove = uniqueCombined.shape[0] - PointTotal
-        lower = HalfSmoothingSize
-        for _ in range(LowerPointsToRemove):
-            uniqueCombined = np.delete(uniqueCombined, lower)
-            lower += 1
 
         return np.copy(uniqueCombined[::-1])

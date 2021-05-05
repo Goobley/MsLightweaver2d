@@ -108,6 +108,7 @@ class MsLightweaverInterpManager:
             self.ltePopsStore = self.zarrStore['SimOutput/Populations/LTE']
             self.radStore = self.zarrStore['SimOutput/Radiation']
             self.neStore = self.zarrStore['SimOutput/ne']
+            self.zGridStore = self.zarrStore['SimOutput/zAxis']
         else:
             temperature = weno4(self.fixedZGrid, atmost.z1[0], atmost.tg1[0])
             vlos = weno4(self.fixedZGrid, atmost.z1[0], atmost.vz1[0])
@@ -141,12 +142,12 @@ class MsLightweaverInterpManager:
             self.radStore = simOut.require_group('Radiation')
             simParams = self.zarrStore.require_group('SimParams')
             simParams['wavelength'] = self.ctx.spect.wavelength
-            simParams['zGridInitial'] = np.copy(self.fixedZGrid)
+            simParams['zAxisInitial'] = np.copy(self.fixedZGrid)
 
             self.radStore['J'] = np.zeros((0, *self.ctx.spect.J.shape))
             self.radStore['I'] = np.zeros((0, *self.ctx.spect.I.shape))
             simOut['zAxis'] = np.zeros((0, self.fixedZGrid.shape[0]))
-            self.zGridStore = simOut['zGrid']
+            self.zGridStore = simOut['zAxis']
             for atom in self.eqPops.atomicPops:
                 if atom.pops is not None:
                     self.ltePopsStore[atom.element.name] = np.zeros((0, *atom.nStar.shape))
@@ -257,8 +258,8 @@ class MsLightweaverInterpManager:
             if atom.pops is not None:
                 for i in range(atom.pops.shape[0]):
                     atom.pops[i] = weno4(zGrid, prevZGrid, atom.pops[i])
-            # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
-            atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+                # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
+                atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
 
 
         if self.prd:
