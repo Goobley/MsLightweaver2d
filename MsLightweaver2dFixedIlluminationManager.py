@@ -15,6 +15,14 @@ from ReadAtmost import read_atmost
 from weno4 import weno4
 import zarr
 
+def interp(xs, xp, fp):
+    # order = np.argsort(xp)
+    # xp = np.ascontiguousarray(xp[order])
+    # fp = np.ascontiguousarray(fp[order])
+
+    # return np.interp(xs, xp, fp)
+    return weno4(xs, xp, fp)
+
 class FixedXBc(lw.BoundaryCondition):
     def __init__(self, mode):
         modes = ['lower', 'upper']
@@ -135,7 +143,8 @@ class MsLw2d:
             self.aSet = self.ms.aSet
             # ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=70, crswCallback=lw.CrswIterator())
             self.ctx = lw.Context(self.atmos2d, self.ms.spect, self.eqPops2d, Nthreads=72,
-                                  formalSolver='piecewise_linear_2d', conserveCharge=conserveCharge,
+                                  formalSolver='piecewise_linear_2d',
+                                  conserveCharge=conserveCharge,
                                   backgroundProvider=FastBackground)
 
             simParams = self.zarrStore.require_group('SimParams')
@@ -256,39 +265,44 @@ class MsLw2d:
         Nx = self.atmos2d.Nx
 
         zRadyn = self.atmost.z1[0]
-        temperature = weno4(zGrid, zRadyn, self.atmost.tg1[0])
+        self.atmos2d.z[:] = self.zAxis
+        temperature = interp(zGrid, zRadyn, self.atmost.tg1[0])
         temp2d = self.atmos2d.temperature.reshape(self.Nz, Nx)
         temp2d[...] = temperature[:, None]
 
         ne2d = self.atmos2d.ne.reshape(self.Nz, Nx)
         if not self.conserveCharge:
-            ne = weno4(zGrid, zRadyn, self.atmost.ne1[0])
+            ne = interp(zGrid, zRadyn, self.atmost.ne1[0])
             ne2d[...] = ne[:, None]
         else:
             for x in range(Nx):
-                ne2d[:, x] = weno4(zGrid, prevZAxis, ne2d[:, x])
+                ne2d[:, x] = interp(zGrid, prevZAxis, ne2d[:, x])
 
-        nHTot = weno4(zGrid, zRadyn, self.nHTotRadyn0)
+        nHTot = interp(zGrid, zRadyn, self.nHTotRadyn0)
         nHTot2d = self.atmos2d.nHTot.reshape(self.Nz, Nx)
         nHTot2d[...] = nHTot[:, None]
 
         # self.ctx.spect.I[...] = 0.0
         # self.ctx.spect.J[...] = 0.0
 
-        # NOTE(cmo): If set, load 1D sim into first column
-        if self.firstColumnFrom1d:
-            self.copy_first_column_from_1d()
         # if self.conserveCharge:
-        self.ctx.update_deps()
 
+        # self.eqPops2d.update_lte_atoms_Hmin_pops(self.atmos2d, self.conserveCharge, updateTotals=True)
         for atom in self.eqPops2d.atomicPops:
+            atom.update_nTotal(self.atmos2d)
             if atom.pops is not None:
                 pops2d = atom.pops.reshape(atom.pops.shape[0], self.Nz, Nx)
                 for i in range(pops2d.shape[0]):
                     for x in range(pops2d.shape[2]):
-                        pops2d[i, :, x] = weno4(zGrid, prevZAxis, pops2d[i, :, x])
+                        pops2d[i, :, x] = interp(zGrid, prevZAxis, pops2d[i, :, x])
                 # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
                 atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+
+        # NOTE(cmo): If set, load 1D sim into first column
+        if self.firstColumnFrom1d:
+            self.copy_first_column_from_1d()
+
+        self.ctx.update_deps()
 
 
     def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):

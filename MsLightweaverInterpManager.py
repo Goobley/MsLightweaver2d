@@ -28,6 +28,13 @@ import pdb
 from copy import copy
 import zarr
 
+def interp(xs, xp, fp):
+    order = np.argsort(xp)
+    xp = np.ascontiguousarray(xp[order])
+    fp = np.ascontiguousarray(fp[order])
+
+    return np.interp(xs, xp, fp)
+
 # https://stackoverflow.com/a/21901260
 import subprocess
 def mslightweaver_revision():
@@ -203,11 +210,11 @@ class MsLightweaverInterpManager:
         self.idx = stepNum
         zGrid = self.zGridStore[self.idx]
         zRadyn = self.atmost.z1[self.idx]
-        self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
-        self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
+        self.atmos.temperature[:] = interp(zGrid, zRadyn, self.atmost.tg1[self.idx])
+        self.atmos.vlos[:] = interp(zGrid, zRadyn, self.atmost.vz1[self.idx])
 
-        self.atmos.nHTot[:] = weno4(zGrid, zRadyn, self.nHTot[self.idx])
-        self.atmos.bHeat[:] = weno4(zGrid, zRadyn, self.atmost.bheat1[self.idx])
+        self.atmos.nHTot[:] = interp(zGrid, zRadyn, self.nHTot[self.idx])
+        self.atmos.bHeat[:] = interp(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
         for name, pops in self.nltePopsStore.items():
             self.eqPops.atomicPops[name].pops[:] = pops[self.idx]
@@ -239,28 +246,31 @@ class MsLightweaverInterpManager:
         self.fixedZGrid = newZGrid
         zGrid = self.fixedZGrid
         zRadyn = self.atmost.z1[self.idx]
-        self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[self.idx])
-        self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[self.idx])
+        self.atmos.z[:] = zGrid
+        self.atmos.temperature[:] = interp(zGrid, zRadyn, self.atmost.tg1[self.idx])
+        self.atmos.vlos[:] = interp(zGrid, zRadyn, self.atmost.vz1[self.idx])
         if not self.conserveCharge:
-            self.atmos.ne[:] = weno4(zGrid, zRadyn, self.atmost.ne1[self.idx])
+            self.atmos.ne[:] = interp(zGrid, zRadyn, self.atmost.ne1[self.idx])
         else:
-            self.atmos.ne[:] = weno4(zGrid, prevZGrid, self.atmos.ne)
+            self.atmos.ne[:] = interp(zGrid, prevZGrid, self.atmos.ne)
 
-        self.atmos.nHTot[:] = weno4(zGrid, zRadyn, self.nHTot[self.idx])
-        self.atmos.bHeat[:] = weno4(zGrid, zRadyn, self.atmost.bheat1[self.idx])
+        self.atmos.nHTot[:] = interp(zGrid, zRadyn, self.nHTot[self.idx])
+        self.atmos.bHeat[:] = interp(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
         self.ctx.spect.I[...] = 0.0
         self.ctx.spect.J[...] = 0.0
 
-        self.ctx.update_deps()
+        # self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, self.conserveCharge, updateTotals=True)
 
         for atom in self.eqPops.atomicPops:
             if atom.pops is not None:
+                atom.update_nTotal(self.atmos)
                 for i in range(atom.pops.shape[0]):
-                    atom.pops[i] = weno4(zGrid, prevZGrid, atom.pops[i])
+                    atom.pops[i] = interp(zGrid, prevZGrid, atom.pops[i])
                 # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
                 atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
 
+        self.ctx.update_deps()
 
         if self.prd:
             self.ctx.configure_hprd_coeffs()

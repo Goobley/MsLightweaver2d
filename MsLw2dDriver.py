@@ -13,7 +13,7 @@ from MsLightweaver2dFixedIlluminationManager import MsLw2d
 from ReadAtmost import read_atmost
 from weno4 import weno4
 
-OutputDir = 'F9_flat_450_40_nr_para_1stColCopy/'
+OutputDir = 'F9_flat_450_40_nr_para_1stColCopy_update/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -68,7 +68,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms2d.increment_step()
-    ms2d.time_dep_step(popsTol=1e-3, Nsubsteps=1000)
+    ms2d.time_dep_step(popsTol=5e-3, Nsubsteps=1000)
     # ms.ctx.clear_ng()
     ms2d.save_timestep_data()
     stepEnd = time.time()
