@@ -253,12 +253,12 @@ class MsLightweaverInterpQSManager:
 
 
         for atom in self.eqPops.atomicPops:
-            self.ctx.update_deps()
             if atom.pops is not None:
+                atom.update_nTotal(self.atmos)
                 for i in range(atom.pops.shape[0]):
                     atom.pops[i] = weno4(zGrid, prevZGrid, atom.pops[i])
-            # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
-            atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
+                # NOTE(cmo): We have the new nTotal from nHTot after update_deps()
+                atom.pops *= (atom.nTotal / np.sum(atom.pops, axis=0))[None, :]
 
 
         self.ctx.update_deps()
