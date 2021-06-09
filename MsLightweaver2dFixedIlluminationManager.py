@@ -92,14 +92,14 @@ class MsLw2d:
                                 conserveCharge=False,
                                 # zarrName=None,
                                 prd=False)
-        self.ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
+        self.ms.initial_stat_eq(popsTol=1e-3, Nscatter=10)
         self.ms.save_timestep()
         # NOTE(cmo): QS Bc
         self.msQs = MsLightweaverInterpQSManager(atmost=self.atmost, outputDir=outputDir,
                                                  atoms=atoms, fixedZGrid=self.zAxis,
                                                  activeAtoms=activeAtoms, startingCtx=startingCtxQs, conserveCharge=False,
                                                  prd=False)
-        self.msQs.stat_eq(popTol=1e-3, Nscatter=10)
+        self.msQs.stat_eq(popsTol=1e-3, Nscatter=10)
         self.msQs.save_timestep()
 
         # NOTE(cmo): Set up 2D atmosphere
@@ -318,7 +318,7 @@ class MsLw2d:
         self.ctx.update_deps()
 
 
-    def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popTol=1e-3):
+    def initial_stat_eq(self, Nscatter=10, NmaxIter=1000, popsTol=1e-3):
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
         self.atmos2d.xUpperBc.set_bc(bcIntensity)
@@ -327,7 +327,7 @@ class MsLw2d:
         for i in range(2000):
             self.ctx.formal_sol_gamma_matrices()
             dPops = self.ctx.stat_equil(chunkSize=-1)
-            if dPops < popTol and i > 3 and self.ctx.crswDone:
+            if dPops < popsTol and i > 3 and self.ctx.crswDone:
                 break
 
         self.ms.atmos.bHeat[:] = weno4(self.zAxis, self.ms.atmost.z1[0], self.ms.atmost.bheat1[0])

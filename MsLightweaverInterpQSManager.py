@@ -158,7 +158,7 @@ class MsLightweaverInterpQSManager:
         self.atmos.hPops = self.eqPops['H']
 
 
-    def stat_eq(self, Nscatter=3, NmaxIter=1000, popTol=1e-3, JTol=3e-3,
+    def stat_eq(self, Nscatter=3, NmaxIter=1000, popsTol=1e-3, JTol=3e-3,
                 overwritePops=True):
         if self.prd:
             self.ctx.configure_hprd_coeffs()
@@ -172,7 +172,7 @@ class MsLightweaverInterpQSManager:
             if self.prd:
                 self.ctx.prd_redistribute()
 
-            if self.ctx.crswDone and dJ < JTol and delta < popTol:
+            if self.ctx.crswDone and dJ < JTol and delta < popsTol:
                 print('Stat eq converged in %d iterations' % (i+1))
                 break
         else:
