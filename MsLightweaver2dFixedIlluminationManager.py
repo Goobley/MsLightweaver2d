@@ -10,6 +10,7 @@ import os.path as path
 import time
 from scipy.signal import wiener
 from MsLightweaverInterpManager import MsLightweaverInterpManager
+from MsLightweaverInterpQSManager import MsLightweaverInterpQSManager
 from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_context
 from ReadAtmost import read_atmost
 from weno4 import weno4
@@ -56,7 +57,7 @@ class MsLw2d:
     def __init__(self, outputDir, atmost, Nz, xAxis,
                  atoms,
                  activeAtoms=['H', 'Ca'],
-                 startingCtx=None, startingCtx1d=None,
+                 startingCtx=None, startingCtx1d=None, startingCtxQs=None,
                  conserveCharge=False,
                  saveJ=True,
                  firstColumnFrom1d=False):
@@ -93,6 +94,13 @@ class MsLw2d:
                                 prd=False)
         self.ms.initial_stat_eq(popTol=1e-3, Nscatter=10)
         self.ms.save_timestep()
+        # NOTE(cmo): QS Bc
+        self.msQs = MsLightweaverInterpQSManager(atmost=self.atmost, outputDir=outputDir,
+                                                 atoms=atoms, fixedZGrid=self.zAxis,
+                                                 activeAtoms=activeAtoms, startingCtx=startingCtxQs, conserveCharge=False,
+                                                 prd=False)
+        self.msQs.stat_eq(popTol=1e-3, Nscatter=10)
+        self.msQs.save_timestep()
 
         # NOTE(cmo): Set up 2D atmosphere
         Nz = self.ms.fixedZGrid.shape[0]
@@ -200,6 +208,7 @@ class MsLw2d:
 
     def load_timestep(self, stepNum):
         self.ms.load_timestep(stepNum)
+        self.msQs.load_timestep(stepNum)
         self.idx = self.ms.idx
 
         for name, pops in self.nltePopsStore.items():
@@ -262,6 +271,10 @@ class MsLw2d:
         self.ms.time_dep_step(popsTol=1e-3, JTol=5e-3, nSubSteps=1000, theta=1.0)
         self.ms.save_timestep()
 
+        self.msQs.increment_step(self.zAxis)
+        self.msQs.stat_eq(popsTol=1e-3, JTol=5e-3)
+        self.msQs.save_timestep()
+
         Nx = self.atmos2d.Nx
 
         zRadyn = self.atmost.z1[0]
@@ -321,9 +334,13 @@ class MsLw2d:
 
 
     def time_dep_step(self, Nsubsteps, popsTol):
+
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
-        # atmos2d.xUpperBc.set_bc(bcIntensity)
+
+        qsBcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
+        self.atmos2d.xUpperBc.set_bc(qsBcIntensity)
+
         print('-------')
         print('1D BC Done')
         print('-------')
