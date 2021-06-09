@@ -151,7 +151,7 @@ class MsLw2d:
             self.aSet = self.ms.aSet
             # ctx = lw.Context(atmos2d, ms.spect, eqPops2d, Nthreads=70, crswCallback=lw.CrswIterator())
             self.ctx = lw.Context(self.atmos2d, self.ms.spect, self.eqPops2d, Nthreads=72,
-                                  formalSolver='piecewise_linear_2d',
+                                #   formalSolver='piecewise_linear_2d',
                                   conserveCharge=conserveCharge,
                                   backgroundProvider=FastBackground)
 

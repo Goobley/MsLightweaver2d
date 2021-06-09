@@ -13,11 +13,7 @@ from MsLightweaver2dFixedIlluminationManager import MsLw2d
 from ReadAtmost import read_atmost
 from weno4 import weno4
 
-<<<<<<< Updated upstream
-OutputDir = 'F9_flat_450_40_nr_para_1stColCopy_update/'
-=======
-OutputDir = 'F9_flat_450_40_nr_para_1stColCopy/'
->>>>>>> Stashed changes
+OutputDir = 'F9_flat_450_40_nr_1stColCopy_besser_qsbc/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -31,24 +27,17 @@ atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
     atmost.bheat1 = np.load('BheatInterp.npy')
 
-with open('ZGrid2d_1037.pkl', 'rb') as pkl:
-    zAxis = pickle.load(pkl)['zAxis']
-
 Nz = 450
 
 startingCtx1d = optional_load_starting_context(OutputDir, suffix='1d')
 startingCtx1dQs = optional_load_starting_context(OutputDir, suffix='1dQs')
 startingCtx2d = optional_load_starting_context(OutputDir, suffix='2d')
-xAxis = np.linspace(0, 2000e3, 40)
+xAxis = np.linspace(0, 2000e3, 41)
 Nz = 450
 # xAxis = np.concatenate(((0,), np.linspace(2e3, 998e3, 20), (1000e3,)))
 
 start = time.time()
-<<<<<<< Updated upstream
 ms2d = MsLw2d(OutputDir, atmost, Nz, xAxis,
-=======
-ms2d = MsLw2d(OutputDir, atmost, 450, xAxis,
->>>>>>> Stashed changes
               AtomSet,
               activeAtoms=['H', 'Ca'],
               startingCtx1d=startingCtx1d, startingCtx=startingCtx2d,
