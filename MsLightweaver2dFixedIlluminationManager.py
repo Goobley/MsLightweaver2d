@@ -171,23 +171,23 @@ class MsLw2d:
             # ics['xUpperBc'] = atmos.xUpperBc.I
 
             timeData = self.zarrStore.require_group('SimOutput')
-            timeData['zAxis'] = np.zeros((0, Nz))
+            timeData['zAxis'] = zarr.zeros((0, Nz), chunks=(1, Nz))
             self.zGridStore = timeData['zAxis']
             self.timeRadStore = timeData.require_group('Radiation')
             self.timePopsStore = timeData.require_group('Populations')
             # self.timeRadStore['J'] = np.expand_dims(self.ctx.spect.J, 0)
             # self.timeRadStore['I'] = np.expand_dims(self.ctx.spect.I, 0)
             if self.saveJ:
-                self.timeRadStore['J'] = np.zeros((0, *self.ctx.spect.J.shape))
-            self.timeRadStore['I'] = np.zeros((0, *self.ctx.spect.I.shape))
+                self.timeRadStore['J'] = zarr.zeros((0, *self.ctx.spect.J.shape), chunks=(1, *self.ctx.spect.J.shape))
+            self.timeRadStore['I'] = zarr.zeros((0, *self.ctx.spect.I.shape), chunks=(1, *self.ctx.spect.I.shape))
             self.ltePopsStore = self.timePopsStore.require_group('LTE')
             self.nltePopsStore = self.timePopsStore.require_group('NLTE')
-            timeData['ne'] = np.zeros((0, *self.atmos2d.ne.shape))
+            timeData['ne'] = zarr.zeros((0, *self.atmos2d.ne.shape), chunks=(1, *self.atmos2d.ne.shape))
             self.neStore = timeData['ne']
             for atom in self.eqPops2d.atomicPops:
                 if atom.pops is not None:
-                    self.ltePopsStore[atom.element.name] = np.zeros((0, *atom.nStar.shape))
-                    self.nltePopsStore[atom.element.name] = np.zeros((0, *atom.pops.shape))
+                    self.ltePopsStore[atom.element.name] = zarr.zeros((0, *atom.nStar.shape), chunks=(1, *atom.nStar.shape))
+                    self.nltePopsStore[atom.element.name] = zarr.zeros((0, *atom.pops.shape), chunks=(1, *atom.pops.shape))
 
         self.idx = self.ms.idx
 
