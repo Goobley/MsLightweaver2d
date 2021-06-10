@@ -338,7 +338,7 @@ class MsLw2d:
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
 
-        qsBcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
+        qsBcIntensity = self.msQs.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xUpperBc.set_bc(qsBcIntensity)
 
         print('-------')
