@@ -237,7 +237,7 @@ class MsLightweaverInterpQSManager:
 
         self.fixedZGrid = newZGrid
         zGrid = self.fixedZGrid
-        zRadyn = self.atmost.z1[self.idx]
+        zRadyn = self.atmost.z1[0]
         self.atmos.temperature[:] = weno4(zGrid, zRadyn, self.atmost.tg1[0])
         self.atmos.vlos[:] = weno4(zGrid, zRadyn, self.atmost.vz1[0])
         if not self.conserveCharge:
