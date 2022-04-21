@@ -100,6 +100,7 @@ class MsLightweaverInterpManager:
         self.idx = 0
         self.nHTot = atmost.d1 / (self.abund.massPerH * Const.Amu)
         self.prd = prd
+        self.updateRhoPrd = False
         self.fixedZGrid = fixedZGrid
         self.Nthreads = Nthreads
 
@@ -171,27 +172,9 @@ class MsLightweaverInterpManager:
         if self.prd:
             self.ctx.configure_hprd_coeffs()
 
-        for i in range(NmaxIter):
-            dJ = self.ctx.formal_sol_gamma_matrices()
-            if i < Nscatter:
-                continue
+        lw.iterate_ctx_se(self.ctx, prd=self.prd, Nscatter=Nscatter, NmaxIter=NmaxIter, 
+                          popsTol=popsTol, JTol=JTol)
 
-            delta = self.ctx.stat_equil()
-            if self.prd:
-                self.ctx.prd_redistribute()
-
-            if self.ctx.crswDone and dJ < JTol and delta < popsTol:
-                print('Stat eq converged in %d iterations' % (i+1))
-                break
-        else:
-            raise ConvergenceError('Stat Eq did not converge.')
-
-        # if overwritePops:
-            # # NOTE(cmo): Overwrite the initial versions of these
-            # for atom in self.eqPops.atomicPops:
-                # if atom.pops is not None:
-                    # self.nltePopsStore[atom.element.name][0, ...] = atom.pops
-            # self.neStore[0, :] = self.atmos.ne
 
     def save_timestep(self, forceOverwrite=False):
         if self.idx == 0 and self.radStore['I'].shape[0] > 0 and not forceOverwrite:
@@ -309,7 +292,7 @@ class MsLightweaverInterpManager:
         ctxRays.depthData.fill = True
         for i in range(50):
             dJ = ctxRays.formal_sol_gamma_matrices()
-            if dJ < 1e-3:
+            if dJ.dJMax < 1e-3:
                 break
 
 
@@ -319,59 +302,41 @@ class MsLightweaverInterpManager:
     def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, theta=1.0, dt=None):
         dt = dt if dt is not None else self.atmost.dt[self.idx+1]
         dNrPops = 0.0
+        # self.ctx.spect.J[:] = 0.0
         if self.prd:
             for atom in self.ctx.activeAtoms:
                 for t in atom.trans:
-                    try:
-                        t.rhoPrd.fill(1.0)
-                        t.gII[0,0,0] = -1.0
-                    except:
-                        pass
+                    t.recompute_gII()
 
-            self.ctx.configure_hprd_coeffs()
-            self.ctx.formal_sol_gamma_matrices()
-            self.ctx.prd_redistribute(200)
-
-        prevState = self.time_dep_prev_state(evalGamma=(theta!=1.0))
+        prevState = None
+        prdStartedOnSub = 0
         for sub in range(nSubSteps):
-            if self.prd and sub > 1:
-                if delta > 5e-1:
-                    pass
-                else:
-                    self.ctx.prd_redistribute(maxIter=5, tol=min(1e-1, 10*delta))
+            if self.updateRhoPrd and sub > 0:
+                dPrd = self.ctx.prd_redistribute(maxIter=10, tol=popsTol)
+                print(dPrd.compact_representation())
 
             dJ = self.ctx.formal_sol_gamma_matrices()
-            delta = self.time_dep_update(dt, prevState, theta=theta)
-            # if sub > 0 and self.conserveCharge:
-                # self.ctx.update_deps()
-
+            print(dJ.compact_representation())
+            delta, prevState = self.ctx.time_dep_update(dt, prevState)
             if self.conserveCharge:
-                dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState['pops']})
+                dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
 
-            if sub > 1 and ((delta < popsTol and dJ < JTol and dNrPops < popsTol)
-                            or (delta < 0.1*popsTol and dNrPops < 0.1*popsTol)
-                            or (dJ < 1e-6)):
-                break
+            popsChange = dNrPops if self.conserveCharge else delta
+            print(popsChange.compact_representation())
+
+            if sub > 1 and (popsChange.dPopsMax < popsTol and dJ.dJMax < JTol):
+                if self.prd: 
+                    if self.updateRhoPrd:
+                        if dPrd.dRhoMax < rhoTol and sub - prdStartedOnSub > 1:
+                            break
+                    else:
+                        print('Starting PRD Iterations')
+                        self.updateRhoPrd = True
+                        prdStartedOnSub = sub
+                else:
+                    break
         else:
-            self.ctx.depthData.fill = True
-            self.ctx.formal_sol_gamma_matrices()
-            self.ctx.depthData.fill = False
-
-            sourceData = {
-                'chi': np.copy(self.ctx.depthData.chi),
-                'eta': np.copy(self.ctx.depthData.eta),
-                'chiBg': np.copy(self.ctx.background.chi),
-                'etaBg': np.copy(self.ctx.background.eta),
-                'scaBg': np.copy(self.ctx.background.sca),
-                'J': np.copy(self.ctx.spect.J)
-                         }
-            with open(self.outputDir + 'Fails.txt', 'a') as f:
-                f.write('%d, %.4e %.4e\n' % (self.idx, delta, dJ))
-
-            with open(self.outputDir + 'NonConvergenceData_%.6d.pickle' % (self.idx), 'wb') as pkl:
-                pickle.dump(sourceData, pkl)
-
-            print('NON-CONVERGED')
+            raise ValueError('NON-CONVERGED')
 
 
 def convert_atomic_pops(atom):

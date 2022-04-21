@@ -108,7 +108,7 @@ class MsLw2d:
         self.Nz = Nz
         self.Nx = Nx
 
-        Nquad2d = 6
+        Nquad2d = 11
         self.Nquad2d = Nquad2d
 
         zarrName = None
@@ -322,13 +322,8 @@ class MsLw2d:
         bcIntensity = self.ms.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xLowerBc.set_bc(bcIntensity)
         self.atmos2d.xUpperBc.set_bc(bcIntensity)
-        for i in range(Nscatter):
-            self.ctx.formal_sol_gamma_matrices()
-        for i in range(2000):
-            self.ctx.formal_sol_gamma_matrices()
-            dPops = self.ctx.stat_equil(chunkSize=-1)
-            if dPops < popsTol and i > 3 and self.ctx.crswDone:
-                break
+
+        lw.iterate_ctx_se(self.ctx, Nscatter=Nscatter, NmaxIter=NmaxIter, popsTol=popsTol)
 
         self.ms.atmos.bHeat[:] = weno4(self.zAxis, self.ms.atmost.z1[0], self.ms.atmost.bheat1[0])
 
@@ -341,17 +336,18 @@ class MsLw2d:
         qsBcIntensity = self.msQs.compute_2d_bc_rays(self.atmos2d.muz[:self.Nquad2d], self.atmos2d.wmu[:self.Nquad2d])
         self.atmos2d.xUpperBc.set_bc(qsBcIntensity)
 
-        print('-------')
+        print('-'*40)
         print('1D BC Done')
-        print('-------')
-        for backgroundIter in range(2):
-            self.ctx.formal_sol_gamma_matrices()
+        print('-'*40)
+        # for backgroundIter in range(2):
+        #     self.ctx.formal_sol_gamma_matrices()
         prevState = None
         dt = self.ms.atmost.dt[self.idx+1]
         Nz = self.atmos2d.Nz
         Nx = self.atmos2d.Nx
         for iter2d in range(Nsubsteps):
-            self.ctx.formal_sol_gamma_matrices()
+            dJ = self.ctx.formal_sol_gamma_matrices()
+            print(dJ.compact_representation())
             # if self.firstColumnFrom1d:
             #     for atom in self.ctx.activeAtoms:
             #         # 0 here gives identity for the time-dependent transition matrix
@@ -364,9 +360,14 @@ class MsLw2d:
                     nDagger.append(np.copy(self.eqPops2d[atom.element]))
 
             dPops, prevState = self.ctx.time_dep_update(dt, prevState, chunkSize=-1)
+            if not self.conserveCharge:
+                print(dPops.compact_representation())
+                dPops = dPops.dPopsMax
 
             if self.conserveCharge:
                 dPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState}, chunkSize=-1)
+                print(dPops.compact_representation())
+                dPops = dPops.dPopsMax
                 # NOTE(cmo): This is implicitly handled by the "Ng region" now,
                 # so dPops will be the change over the total iterative
                 # procedure.
@@ -388,7 +389,7 @@ class MsLw2d:
                 print('    dPops after resetting first column to 1D values: %6.4e' % dPops)
 
 
-            if dPops < popsTol and iter2d > 5:
+            if dPops < popsTol and iter2d > 3:
                 break
         else:
             raise ValueError('2D iteration failed to converge')

@@ -13,7 +13,7 @@ from MsLightweaver2dFixedIlluminationManager import MsLw2d
 from ReadAtmost import read_atmost
 from weno4 import weno4
 
-OutputDir = 'F9_flat_450_40_nr_1stColCopy_besser_qsbc/'
+OutputDir = 'F10_flat_600_111_HAR/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -27,13 +27,16 @@ atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
     atmost.bheat1 = np.load('BheatInterp.npy')
 
-Nz = 450
+Nz = 600
 
 startingCtx1d = optional_load_starting_context(OutputDir, suffix='1d')
 startingCtx1dQs = optional_load_starting_context(OutputDir, suffix='1dQs')
 startingCtx2d = optional_load_starting_context(OutputDir, suffix='2d')
 xAxis = np.linspace(0, 2000e3, 41)
-Nz = 450
+xAxis = np.concatenate([np.linspace(0, 500e3, 41), # [0, 0.5] Mm @ 10 km
+                        np.linspace(0.525e6, 1.0e6, 20), # (0.5, 1.0] Mm @ 25 km
+                        np.linspace(1.05e6, 3.0e6, 40)]) # (1.0, 3.0] Mm @ 50 km
+
 # xAxis = np.concatenate(((0,), np.linspace(2e3, 998e3, 20), (1000e3,)))
 
 start = time.time()
@@ -51,7 +54,7 @@ if startingCtx1dQs is None:
     with open(OutputDir + 'StartingContext1dQs.pickle', 'wb') as pkl:
         pickle.dump(ms2d.msQs.ctx, pkl)
 
-ms2d.initial_stat_eq()
+ms2d.initial_stat_eq(Nscatter=5)
 ms2d.save_timestep_data()
 
 if startingCtx2d is None:
