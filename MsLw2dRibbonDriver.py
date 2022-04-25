@@ -36,7 +36,7 @@ xAxis = np.concatenate([np.linspace(0, 500e3, 41), # [0, 0.5] Mm @ 10 km
                         np.linspace(1.05e6, 3.0e6, 40)]) # (1.0, 3.0] Mm @ 50 km
 xAxis = np.concatenate([np.linspace(-4e6, -2e6, 11),
                         np.linspace(-2e6, -0.5e6, 16)[1:],
-                        np.linspace(-0.5e6, 0.5e6, 40)[1:],
+                        np.linspace(-0.5e6, 0.5e6, 41)[1:],
                         np.linspace(0.5e6, 2e6, 16)[1:],
                         np.linspace(2e6, 4e6, 11)[1:]])
 
