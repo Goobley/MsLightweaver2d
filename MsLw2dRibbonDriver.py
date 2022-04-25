@@ -73,7 +73,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms2d.increment_step()
-    ms2d.time_dep_step(popsTol=5e-3, Nsubsteps=1000)
+    ms2d.time_dep_step(popsTol=2e-3, Nsubsteps=1000)
     # ms.ctx.clear_ng()
     ms2d.save_timestep_data()
     stepEnd = time.time()
