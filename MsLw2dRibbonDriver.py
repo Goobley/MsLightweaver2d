@@ -11,7 +11,7 @@ from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_cont
 from MsLightweaver2dPeriodicCentralRibbon import MsLw2dPeriodic
 from ReadAtmost import read_atmost
 
-OutputDir = 'F9_flat_3e6_5flare_330_91_HAR/'
+OutputDir = 'F10_flat_3.5e6_5flare_370_91_HAR/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -25,9 +25,9 @@ atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
     atmost.bheat1 = np.load('BheatInterp.npy')
 
-Nz = 330
+Nz = 370
 NcentralColumnsFromFlare = 5
-MaxZ = 3e6
+MaxZ = 3.5e6
 
 startingCtx2d = optional_load_starting_context(OutputDir, suffix='2d')
 xAxis = np.linspace(0, 2000e3, 41)
