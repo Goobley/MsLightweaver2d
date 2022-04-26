@@ -11,7 +11,7 @@ from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_cont
 from MsLightweaver2dPeriodicCentralRibbon import MsLw2dPeriodic
 from ReadAtmost import read_atmost
 
-OutputDir = 'F10_flat_3.5e6_5flare_370_91_HAR/'
+OutputDir = 'F10_flat_3.5e6_5flare_370_91_7ray/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]

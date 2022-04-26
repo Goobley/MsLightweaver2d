@@ -81,7 +81,7 @@ class MsLw2dPeriodic:
         self.Nz = Nz
         self.Nx = Nx
 
-        Nquad2d = 11
+        Nquad2d = 7
         self.Nquad2d = Nquad2d
 
         zarrName = None
@@ -171,9 +171,6 @@ class MsLw2dPeriodic:
                 if atom.pops is not None:
                     self.ltePopsStore[atom.element.name] = zarr.zeros((0, *atom.nStar.shape), chunks=(1, *atom.nStar.shape))
                     self.nltePopsStore[atom.element.name] = zarr.zeros((0, *atom.pops.shape), chunks=(1, *atom.pops.shape))
-
-    # TODO(cmo): Want to be able to limit the maxZ
-
 
     def save_timestep_data(self):
         if self.idx == 0 and self.timeRadStore['I'].shape[0] > 0:
@@ -329,7 +326,7 @@ class MsLw2dPeriodic:
     def next_z_axis(self, maxZ=None):
         idxO = 0
         idxN = self.idx
-        DistTol = 1
+        DistTol = 1 # m
         PointTotal = self.Nz
         SmoothingSize = 15
         HalfSmoothingSize = SmoothingSize // 2
