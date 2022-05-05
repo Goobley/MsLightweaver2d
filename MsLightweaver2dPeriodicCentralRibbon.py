@@ -301,7 +301,7 @@ class MsLw2dPeriodic:
         lw.iterate_ctx_se(self.ctx, Nscatter=Nscatter, NmaxIter=NmaxIter, popsTol=popsTol)
 
 
-    def time_dep_step(self, Nsubsteps, popsTol):
+    def time_dep_step(self, Nsubsteps, popsTol, altJTol=1e-3):
         prevState = None
         dt = self.atmost.dt[self.idx+1]
         for iter2d in range(Nsubsteps):
@@ -318,7 +318,7 @@ class MsLw2dPeriodic:
                 print(dPops.compact_representation())
                 dPops = dPops.dPopsMax
 
-            if dPops < popsTol and iter2d > 3:
+            if (dPops < popsTol or dJ.dJMax < altJTol) and iter2d > 3:
                 break
         else:
             raise ValueError('2D iteration failed to converge')

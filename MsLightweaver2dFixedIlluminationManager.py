@@ -206,36 +206,42 @@ class MsLw2d:
         self.neStore.append(np.expand_dims(self.atmos2d.ne, 0))
         self.zGridStore.append(np.expand_dims(self.zAxis, 0))
 
-    def load_timestep(self, stepNum):
-        self.ms.load_timestep(stepNum)
-        self.msQs.load_timestep(stepNum)
+    def load_timestep(self, stepNum, destroyLaterTimesteps=False):
+        self.ms.load_timestep(stepNum, destroyLaterTimesteps=destroyLaterTimesteps)
+        self.msQs.load_timestep(stepNum, destroyLaterTimesteps=destroyLaterTimesteps)
         self.idx = self.ms.idx
 
         for name, pops in self.nltePopsStore.items():
             self.eqPops2d.atomicPops[name].pops[:] = pops[self.idx]
             # NOTE(cmo): Remove entries after the one being loaded
-            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+            if destroyLaterTimesteps:
+                pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
         for name, pops in self.ltePopsStore.items():
             self.eqPops2d.atomicPops[name].nStar[:] = pops[self.idx]
-            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+            if destroyLaterTimesteps:
+                pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
         zGridStore = self.zGridStore
         self.atmos2d.z[:] = zGridStore[self.idx]
-        zGridStore.resize(self.idx+1, *zGridStore.shape[1:])
+        if destroyLaterTimesteps:
+            zGridStore.resize(self.idx+1, *zGridStore.shape[1:])
 
         neStore = self.neStore
         self.atmos2d.ne[:] = neStore[self.idx]
-        neStore.resize(self.idx+1, *neStore.shape[1:])
+        if destroyLaterTimesteps:
+            neStore.resize(self.idx+1, *neStore.shape[1:])
 
         shape = self.timeRadStore['I'].shape
         self.ctx.spect.I[:] = self.timeRadStore['I'][self.idx]
-        self.timeRadStore['I'].resize(self.idx+1, *shape[1:])
+        if destroyLaterTimesteps:
+            self.timeRadStore['I'].resize(self.idx+1, *shape[1:])
 
         if self.saveJ:
             shape = self.timeRadStore['J'].shape
             self.ctx.spect.J[:] = self.timeRadStore['J'][self.idx]
-            self.timeRadStore['J'].resize(self.idx+1, *shape[1:])
+            if destroyLaterTimesteps:
+                self.timeRadStore['J'].resize(self.idx+1, *shape[1:])
 
         if self.firstColumnFrom1d:
             self.copy_first_column_from_1d()

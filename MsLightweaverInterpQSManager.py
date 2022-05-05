@@ -180,7 +180,7 @@ class MsLightweaverInterpQSManager:
         self.zGridStore.append(np.expand_dims(self.fixedZGrid, 0))
 
 
-    def load_timestep(self, stepNum):
+    def load_timestep(self, stepNum, destroyLaterTimesteps=False):
         self.idx = stepNum
         zGrid = self.zGridStore[self.idx]
         zRadyn = self.atmost.z1[self.idx]
@@ -193,23 +193,28 @@ class MsLightweaverInterpQSManager:
         for name, pops in self.nltePopsStore.items():
             self.eqPops.atomicPops[name].pops[:] = pops[self.idx]
             # NOTE(cmo): Remove entries after the one being loaded
-            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+            if destroyLaterTimesteps:
+                pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
         for name, pops in self.ltePopsStore.items():
             self.eqPops.atomicPops[name].nStar[:] = pops[self.idx]
-            pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
+            if destroyLaterTimesteps:
+                pops.resize(self.idx+1, pops.shape[1], pops.shape[2])
 
         neStore = self.neStore
         self.atmos.ne[:] = neStore[self.idx]
-        neStore.resize(self.idx+1, *neStore.shape[1:])
+        if destroyLaterTimesteps:
+            neStore.resize(self.idx+1, *neStore.shape[1:])
 
         shape = self.radStore['I'].shape
         self.ctx.spect.I[:] = self.radStore['I'][self.idx]
-        self.radStore['I'].resize(self.idx+1, *shape[1:])
+        if destroyLaterTimesteps:
+            self.radStore['I'].resize(self.idx+1, *shape[1:])
 
         shape = self.radStore['J'].shape
         self.ctx.spect.J[:] = self.radStore['J'][self.idx]
-        self.radStore['J'].resize(self.idx+1, *shape[1:])
+        if destroyLaterTimesteps:
+            self.radStore['J'].resize(self.idx+1, *shape[1:])
 
         self.ctx.update_deps()
 

@@ -52,15 +52,16 @@ ms2d = MsLw2dPeriodic(OutputDir, atmost, Nz, xAxis,
                       maxZ=MaxZ,
                       saveJ=False)
 
-ms2d.initial_stat_eq(Nscatter=5)
-ms2d.save_timestep_data()
+firstStep = 550
+if firstStep == 0:
+    ms2d.initial_stat_eq(Nscatter=5)
+    ms2d.save_timestep_data()
 
 if startingCtx2d is None:
     with open(OutputDir + 'StartingContext2d.pickle', 'wb') as pkl:
         pickle.dump(ms2d.ctx, pkl)
 
 maxSteps = ms2d.atmost.time.shape[0] - 1
-firstStep = 0
 if firstStep != 0:
     # NOTE(cmo): This loads the state at the end of firstStep, therefore we
     # need to start integrating at firstStep+1
@@ -73,7 +74,7 @@ for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms2d.increment_step()
-    ms2d.time_dep_step(popsTol=2e-3, Nsubsteps=1000)
+    ms2d.time_dep_step(popsTol=2e-3, altJTol=1e-3, Nsubsteps=100)
     # ms.ctx.clear_ng()
     ms2d.save_timestep_data()
     stepEnd = time.time()
