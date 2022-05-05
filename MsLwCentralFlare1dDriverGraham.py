@@ -87,7 +87,7 @@ FchromaAtoms = [H_6(), CaII(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_at
 AtomSet = NasaAtoms
 ConserveCharge = True
 
-atmost = read_atmost('atmost.dat')
+atmost = read_cdf('QS_10Mm_3MK_electron_longrampup_d5_Ec0025_RC.cdf')
 atmost.to_SI()
 
 Nz = 200
