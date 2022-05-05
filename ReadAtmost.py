@@ -1,5 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
+from radynpy.cdf import LazyRadynData
 
 @dataclass
 class Atmost:
@@ -34,6 +35,27 @@ class Atmost:
         # for the Fang rates, which are entirely described with cgs.
 
         self.cgs = False
+
+
+def read_cdf(filename) -> Atmost:
+    cdf = LazyRadynData(filename)
+    grav = cdf.grav
+    vturb = np.copy(cdf.vturb)
+
+    time = cdf.time
+    dt = cdf.time[1:] - cdf.time[:-1]
+    dt = np.concatenate([[dt[0]], dt])
+    z1 = np.copy(cdf.z1)
+    d1 = np.copy(cdf.d1)
+    ne1 = np.copy(cdf.ne1)
+    tg1 = np.copy(cdf.tg1)
+    vz1 = np.copy(cdf.vz1)
+    nh1 = np.copy(cdf.n1[:, :, :6, 0])
+    bheat1 = np.copy(cdf.bheat1)
+
+    return Atmost(grav=grav, tau2=0.0, vturb=vturb, time=time, dt=dt,
+                  z1=z1, d1=d1, ne1=ne1, tg1=tg1, vz1=vz1, nh1=nh1,
+                  bheat1=bheat1)
 
 
 def read_atmost(filename='atmost.dat') -> Atmost:
