@@ -51,6 +51,7 @@ ms2d = MsLw2dPeriodic(OutputDir, atmost, Nz, xAxis,
                       conserveCharge=ConserveCharge,
                       NcentralColumnsFromFlare=NcentralColumnsFromFlare,
                       maxZ=MaxZ,
+                      Nquad2d=Nquad2d,
                       saveJ=False)
 
 firstStep = 0
