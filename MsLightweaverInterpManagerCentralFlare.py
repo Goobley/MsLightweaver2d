@@ -1,3 +1,4 @@
+from multiprocessing.sharedctypes import Value
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
@@ -148,7 +149,7 @@ class MsLightweaverInterpManager:
                                   initSol=InitialSolution.Lte,
                                   conserveCharge=self.conserveCharge,
                                   Nthreads=self.Nthreads,
-                                  backgroundProvider=FastBackground)
+                                  backgroundProvider=FastBackground, hprd=prd)
             simOut = self.zarrStore.require_group('SimOutput')
             pops = simOut.require_group('Populations')
             self.nltePopsStore = pops.require_group('NLTE')
@@ -175,8 +176,8 @@ class MsLightweaverInterpManager:
 
     def initial_stat_eq(self, Nscatter=3, NmaxIter=1000, popsTol=1e-3, JTol=3e-3,
                         overwritePops=True):
-        if self.prd:
-            self.ctx.configure_hprd_coeffs()
+        # if self.prd:
+        #     self.ctx.configure_hprd_coeffs()
 
         lw.iterate_ctx_se(self.ctx, prd=self.prd, Nscatter=Nscatter, NmaxIter=NmaxIter, 
                           popsTol=popsTol, JTol=JTol)
@@ -251,8 +252,8 @@ class MsLightweaverInterpManager:
         self.atmos.nHTot[:] = interp(zGrid, zRadyn, self.nHTot[self.idx])
         self.atmos.bHeat[:] = interp(zGrid, zRadyn, self.atmost.bheat1[self.idx])
 
-        self.ctx.spect.I[...] = 0.0
-        self.ctx.spect.J[...] = 0.0
+        # self.ctx.spect.I[...] = 0.0
+        # self.ctx.spect.J[...] = 0.0
 
         # self.eqPops.update_lte_atoms_Hmin_pops(self.atmos, self.conserveCharge, updateTotals=True)
 
@@ -266,8 +267,8 @@ class MsLightweaverInterpManager:
 
         self.ctx.update_deps()
 
-        if self.prd:
-            self.ctx.configure_hprd_coeffs()
+        # if self.prd:
+        #     self.ctx.update_hprd_coeffs()
 
     def time_dep_prev_state(self, evalGamma=False):
         if evalGamma:
@@ -310,7 +311,7 @@ class MsLightweaverInterpManager:
         return ctxRays.depthData.I
 
 
-    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, rhoTol=1e-2, theta=1.0, dt=None):
+    def time_dep_step(self, nSubSteps=200, popsTol=1e-3, JTol=3e-3, rhoTol=1e-2, theta=1.0, dt=None, depth=0):
         dt = dt if dt is not None else self.atmost.dt[self.idx+1]
         dNrPops = 0.0
         # self.ctx.spect.J[:] = 0.0
@@ -320,35 +321,58 @@ class MsLightweaverInterpManager:
                     t.recompute_gII()
 
         prevState = None
+        # prevState = self.time_dep_prev_state(evalGamma=(theta!=1.0))
         prdStartedOnSub = 0
-        for sub in range(nSubSteps):
-            if self.updateRhoPrd and sub > 0:
-                dPrd = self.ctx.prd_redistribute(maxIter=10, tol=popsTol)
-                print(dPrd.compact_representation())
+        try:
+            for sub in range(nSubSteps):
+                if self.updateRhoPrd and sub > 0:
+                    dPrd = self.ctx.prd_redistribute(maxIter=10, tol=popsTol)
+                    print(dPrd.compact_representation())
 
-            dJ = self.ctx.formal_sol_gamma_matrices()
-            print(dJ.compact_representation())
-            delta, prevState = self.ctx.time_dep_update(dt, prevState)
-            if self.conserveCharge:
-                dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
+                dJ = self.ctx.formal_sol_gamma_matrices()
+                print(dJ.compact_representation())
+                dJMaxIdx = dJ.dJMaxIdx
+                Nz = self.atmost.z1.shape[1]
+                laMax = dJMaxIdx
+                print(f'{self.ctx.spect.wavelength[laMax]} nm')
+                delta, prevState = self.ctx.time_dep_update(dt, prevState)
+                # delta = self.time_dep_update(dt, prevState, theta=theta)
+                if self.conserveCharge:
+                    dNrPops = self.ctx.nr_post_update(timeDependentData={'dt': dt, 'nPrev': prevState})
 
-            popsChange = dNrPops if self.conserveCharge else delta
-            print(popsChange.compact_representation())
+                popsChange = dNrPops if self.conserveCharge else delta
+                print(popsChange.compact_representation())
+                dPopsMaxIdx = popsChange.dPopsMaxIdx[0]
+                levelMax = dPopsMaxIdx // Nz
+                kMax = dPopsMaxIdx - (levelMax * Nz)
+                print(f'level={levelMax}, {self.atmos.height[kMax] / 1e6} Mm ({kMax})')
 
-            if sub > 1 and (popsChange.dPopsMax < popsTol and dJ.dJMax < JTol):
-                if self.prd: 
-                    if self.updateRhoPrd:
-                        if dPrd.dRhoMax < rhoTol and sub - prdStartedOnSub > 1:
-                            break
+
+                if sub > 1 and (popsChange.dPopsMax < popsTol and dJ.dJMax < JTol):
+                    if self.prd: 
+                        if self.updateRhoPrd:
+                            if dPrd.dRhoMax < rhoTol and sub - prdStartedOnSub > 1:
+                                break
+                        else:
+                            print('Starting PRD Iterations')
+                            self.updateRhoPrd = True
+                            prdStartedOnSub = sub
                     else:
-                        print('Starting PRD Iterations')
-                        self.updateRhoPrd = True
-                        prdStartedOnSub = sub
-                else:
-                    break
-        else:
-            raise ValueError('NON-CONVERGED')
+                        break
+            else:
+                raise ValueError('NON-CONVERGED')
+        except:
+            if depth == 0:
+                print('Depth bail-out')
+                raise ValueError('Depth didn\'t fix')
 
+            print(f'Retrying finer: depth: {depth+1}')
+            self.ctx.time_dep_restore_prev_pops(prevState)
+            self.ctx.atmos.ne[:] = weno4(self.ctx.atmos.height, self.zGridStore[-1][:], self.neStore[-1][:])
+            self.ctx.update_deps()
+            for t in range(10):
+                print(f'substep {t}')
+                self.time_dep_step(nSubSteps, popsTol, JTol, rhoTol, theta, dt=0.1*dt, depth=depth+1)
 
 def convert_atomic_pops(atom):
     d = {}

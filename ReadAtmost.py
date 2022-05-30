@@ -1,6 +1,9 @@
 import numpy as np
 from dataclasses import dataclass
 from radynpy.cdf import LazyRadynData
+from cdflib import CDF
+from typing import Optional
+from weno4 import weno4
 
 @dataclass
 class Atmost:
@@ -16,7 +19,7 @@ class Atmost:
     tg1: np.ndarray
     vz1: np.ndarray
     nh1: np.ndarray
-    bheat1: np.ndarray
+    bheat1: Optional[np.ndarray]
 
     cgs: bool = True
 
@@ -35,6 +38,95 @@ class Atmost:
         # for the Fang rates, which are entirely described with cgs.
 
         self.cgs = False
+
+    def reinterpolate(self, maxTimestep=0.01, tol=1e-4) -> 'Atmost':
+        '''
+        Reinterpolates atmost to not surpass a maxTimestep.
+        Tol is a small biasing parameter to prevent just falling short of pre-existing timesteps (which are all kept).
+
+        The implementation is very inefficient for now.
+        '''
+
+        time = []
+        dt = []
+        z1 = []
+        d1 = []
+        ne1 = []
+        tg1 = []
+        vz1 = []
+        nh1 = []
+        bheat = []
+
+        def interp_param(z, t0, t1, alpha, param):
+            z0 = self.z1[t0]
+            z1 = self.z1[t1]
+            p0 = weno4(z, z0, param[t0])
+            p1 = weno4(z, z1, param[t1])
+            return (1.0 - alpha) * p0 + alpha * p1
+
+
+        for t in range(self.time.shape[0]):
+            print(t)
+            if ((t != self.time.shape[0] - 1)
+                and (self.time[t+1] - self.time[t] > maxTimestep + tol)):
+                startTime = self.time[t]
+                elapsed = 0.0
+                currentTime = startTime + elapsed
+                while currentTime < self.time[t+1]:
+                    if currentTime == self.time[t]:
+                        z = self.z1[t]
+                    else:
+                        z = 0.5 * (self.z1[t] + self.z1[t+1])
+
+                    alpha = (currentTime - self.time[t]) / (self.time[t+1] - self.time[t])
+                    z1.append(z)
+                    d1.append(interp_param(z, t, t+1, alpha, self.d1))
+                    ne1.append(interp_param(z, t, t+1, alpha, self.ne1))
+                    tg1.append(interp_param(z, t, t+1, alpha, self.tg1))
+                    vz1.append(interp_param(z, t, t+1, alpha, self.vz1))
+                    nh = np.zeros_like(self.nh1[0])
+                    for i in range(nh.shape[1]):
+                        nh[:, i] = interp_param(z, t, t+1, alpha, self.nh1[:, :, i])
+                    nh1.append(nh)
+                    if self.bheat1 is not None:
+                        bheat.append(interp_param(z, t, t+1, alpha, self.bheat1))
+                    time.append(currentTime)
+
+                    elapsed += maxTimestep
+                    currentTime += maxTimestep
+                    if currentTime + tol >= self.time[t+1]:
+                        break
+
+            else:
+                time.append(self.time[t])
+                z1.append(self.z1[t])
+                d1.append(self.d1[t])
+                ne1.append(self.ne1[t])
+                tg1.append(self.tg1[t])
+                vz1.append(self.vz1[t])
+                nh1.append(self.nh1[t])
+                if self.bheat1 is not None:
+                    bheat.append(self.bheat1[t])
+
+        time = np.array(time)
+        z1 = np.stack(z1)
+        d1 = np.stack(d1)
+        ne1 = np.stack(ne1)
+        tg1 = np.stack(tg1)
+        vz1 = np.stack(vz1)
+        nh1 = np.stack(nh1)
+        if self.bheat1 is not None:
+            bheat = np.stack(bheat)
+        else:
+            bheat = None
+
+        dt = time[1:] - time[:-1]
+        dt = np.concatenate([[dt[0]], dt])
+
+        return Atmost(grav=self.grav, tau2=self.tau2, vturb=self.vturb, 
+                      time=time, dt=dt, z1=z1, d1=d1, ne1=ne1, tg1=tg1, 
+                      vz1=vz1, nh1=nh1, bheat1=bheat)
+
 
 
 def read_cdf(filename) -> Atmost:
@@ -56,6 +148,25 @@ def read_cdf(filename) -> Atmost:
     return Atmost(grav=grav, tau2=0.0, vturb=vturb, time=time, dt=dt,
                   z1=z1, d1=d1, ne1=ne1, tg1=tg1, vz1=vz1, nh1=nh1,
                   bheat1=bheat1)
+
+def read_atmost_cdf(filename) -> Atmost:
+    cdf = CDF(filename)
+    grav = cdf.varget('grav')
+    tau2 = np.copy(cdf.varget('tau2'))
+    vturb = np.copy(cdf.varget('vturb'))
+
+    time = np.copy(cdf.varget('time'))
+    dt = np.copy(cdf.varget('dtnm'))
+    z1 = np.copy(cdf.varget('z1'))
+    d1 = np.copy(cdf.varget('d1'))
+    ne1 = np.copy(cdf.varget('ne1'))
+    tg1 = np.copy(cdf.varget('tg1'))
+    vz1 = np.copy(cdf.varget('vz1'))
+    nh1 = np.copy(cdf.varget('nh1'))
+
+    return Atmost(grav=grav, tau2=tau2, vturb=vturb, time=time, dt=dt,
+                  z1=z1, d1=d1, ne1=ne1, tg1=tg1, vz1=vz1, nh1=nh1,
+                  bheat1=None)
 
 
 def read_atmost(filename='atmost.dat') -> Atmost:

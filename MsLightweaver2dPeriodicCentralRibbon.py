@@ -48,6 +48,7 @@ class MsLw2dPeriodic:
                  atoms,
                  activeAtoms=['H', 'Ca'],
                  NcentralColumnsFromFlare=5,
+                 Nquad2d=7,
                  maxZ=None,
                  startingCtx=None,
                  conserveCharge=False,
@@ -81,7 +82,6 @@ class MsLw2dPeriodic:
         self.Nz = Nz
         self.Nx = Nx
 
-        Nquad2d = 7
         self.Nquad2d = Nquad2d
 
         zarrName = None
