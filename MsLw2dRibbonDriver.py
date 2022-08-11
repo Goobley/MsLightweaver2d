@@ -11,7 +11,7 @@ from MsLightweaverUtil import test_timesteps_in_dir, optional_load_starting_cont
 from MsLightweaver2dPeriodicCentralRibbon import MsLw2dPeriodic
 from ReadAtmost import read_atmost
 
-OutputDir = 'F9_flat_3e6_10flare_330_91_HAR/'
+OutputDir = 'F10_flat_3.5e6_21flare_370_91_7angle/'
 Path(OutputDir).mkdir(parents=True, exist_ok=True)
 NasaAtoms = [H_6_nasa(), CaII_nasa(), He_9_atom(), C_atom(), O_atom(), Si_atom(), Fe_atom(),
              MgII_atom(), N_atom(), Na_atom(), S_atom()]
@@ -25,10 +25,10 @@ atmost.to_SI()
 if atmost.bheat1.shape[0] == 0:
     atmost.bheat1 = np.load('BheatInterp.npy')
 
-Nz = 330
-NcentralColumnsFromFlare = 10
-MaxZ = 3e6
-Nquad2d = 11
+Nz = 370
+NcentralColumnsFromFlare = 21
+MaxZ = 3.5e6
+Nquad2d = 7
 
 startingCtx2d = optional_load_starting_context(OutputDir, suffix='2d')
 xAxis = np.linspace(0, 2000e3, 41)
@@ -72,12 +72,22 @@ if firstStep != 0:
     ms2d.ctx.formal_sol_gamma_matrices()
     firstStep += 1
 
+failRunLength = 0
 for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
         ms2d.increment_step()
-    ms2d.time_dep_step(popsTol=2e-3, altJTol=1e-3, Nsubsteps=100)
-    # ms.ctx.clear_ng()
+    try:
+        ms2d.time_dep_step(popsTol=2e-3, altJTol=1e-3, Nsubsteps=100)
+    except ValueError:
+        with open(OutputDir + '/Fails.txt', 'a') as f:
+            f.write(f"{i}\n")
+            failRunLength += 1
+            if failRunLength > 10:
+                raise ValueError("Too many consecutive fails")
+    else:
+        failRunLength = 0
+    ms2d.ctx.clear_ng()
     ms2d.save_timestep_data()
     stepEnd = time.time()
     print('-------')

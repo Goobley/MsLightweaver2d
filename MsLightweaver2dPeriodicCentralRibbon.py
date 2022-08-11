@@ -137,7 +137,8 @@ class MsLw2dPeriodic:
             self.ctx = lw.Context(self.atmos2d, self.spect, self.eqPops2d,
                                   Nthreads=72,
                                   conserveCharge=conserveCharge,
-                                  backgroundProvider=FastBackground)
+                                  backgroundProvider=FastBackground, 
+                                  ngOptions=lw.NgOptions(2, 7, 10))
 
             simParams = self.zarrStore.require_group('SimParams')
             simParams['zAxisInitial'] = np.copy(self.zAxis)
@@ -306,7 +307,7 @@ class MsLw2dPeriodic:
         dt = self.atmost.dt[self.idx+1]
         for iter2d in range(Nsubsteps):
             dJ = self.ctx.formal_sol_gamma_matrices()
-            print(dJ.compact_representation())
+            print(dJ.compact_representation() + f" (wl: {self.ctx.spect.wavelength[dJ.dJMaxIdx]} nm @ {dJ.dJMaxIdx})")
 
             dPops, prevState = self.ctx.time_dep_update(dt, prevState, chunkSize=-1)
             if not self.conserveCharge:

@@ -123,9 +123,9 @@ if firstStep != 0:
 for i in range(firstStep, maxSteps):
     stepStart = time.time()
     if i != 0:
-        newZ = next_z_axis(atmost, Nz, i+1, MaxZ)
+        newZ = next_z_axis(atmost, Nz, ms.idx + 1, MaxZ)
         ms.increment_step(newZ)
-    ms.time_dep_step(popsTol=1e-3)
+    ms.time_dep_step(popsTol=1e-4)
     # ms.ctx.clear_ng()
     ms.save_timestep()
     stepEnd = time.time()
